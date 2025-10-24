@@ -11,7 +11,7 @@ pub fn logger() Middleware {
 		res := next()!
 
 		duration := time.now() - start
-		println("[${time.now().format()}] ${c.req.method} ${c.req.path} - ${duration.milliseconds()}ms")
+		println("[${time.now().format()}] ${c.request.method} ${c.request.path} - ${duration.milliseconds()}ms")
 
 		return res
 	}
@@ -21,7 +21,7 @@ pub fn cors(options ...string) Middleware {
 	origins := if options.len > 0 { options[0] } else { "*" }
 
 	return fn [origins] (c Context, next Next) !Response {
-		if c.req.method == "OPTIONS" {
+		if c.request.method == "OPTIONS" {
 			return Response{
 				body: ""
 				status: 204

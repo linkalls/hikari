@@ -5,21 +5,24 @@ import regex
 // Placeholder for Pattern struct
 struct Pattern {
     raw_path string
+mut:
     regex    regex.RE
+    param_names []string
 }
 
 type PathOrMiddleware = string | Middleware
 
 struct Route {
+mut:
 	pattern Pattern
 	middlewares []Middleware
-	handler Handler = unsafe { nil }
+	handler ?Handler
 }
 
 // 内部veb委譲アプリ（完全隠蔽）
 pub struct InternalVebApp {
 mut:
-	hikari_app &Hikari
+	hikari_app Hikari
 }
 
 // veb.Contextをhikari.Contextに変換する内部型
@@ -31,7 +34,7 @@ mut:
 	routes map[string][]Route
 	middlewares []Middleware
 	path_middlewares map[string][]Middleware
-	internal_app &InternalVebApp = unsafe { nil }
+	internal_app ?&InternalVebApp
 }
 
 // Hikari()コンストラクタ（完全にHikariと同じ）
@@ -150,9 +153,10 @@ fn (mut app Hikari) add_middleware_with_path(path string, m Middleware) {
 fn (mut internal InternalVebApp) handle_all(mut veb_ctx veb.Context, path string) veb.Result {
 	// veb.ContextをHikariライクなContextに変換
 	mut hikari_ctx := create_hikari_context(veb_ctx, path)
+	mut response := Response{}
 
 	// Hikariアプリでリクエスト処理
-	response := internal.hikari_app.handle_request(mut hikari_ctx) or {
+	response = internal.hikari_app.handle_request(mut hikari_ctx) or {
 		return veb_ctx.text("Internal Server Error")
 	}
 
@@ -191,24 +195,42 @@ fn create_hikari_context(veb_ctx veb.Context, path string) Context {
 
 	return Context{
 		Context: veb_ctx,
-		req: req,
+		request: req,
 		var: map[string]Any{},
 	}
 }
 
 // Placeholder for compile_pattern function
 fn compile_pattern(path string) Pattern {
+    mut param_names := []string{}
+    mut regex_path := path
+    mut re := regex.regex_opt(r":(\w+)") or { panic(err) }
+    matches := re.find_all_str(path)
+    for m in matches {
+        param_name := m.replace(":", "")
+        param_names << param_name
+        regex_path = regex_path.replace(m, r"(\w+)")
+    }
     return Pattern{
         raw_path: path,
-        regex: regex.new('') or { panic(err) }
+        regex: regex.regex_opt(regex_path + "$") or { panic(err) },
+        param_names: param_names
     }
 }
 
 // Placeholder for handle_request method
-pub fn (app &Hikari) handle_request(mut ctx Context) !Response {
-    for route in app.routes[ctx.req.method] {
-        if ctx.req.path == route.pattern.raw_path {
-            return route.handler(ctx)
+pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
+    for mut route in app.routes[ctx.request.method] {
+        start, _ := route.pattern.regex.match_string(ctx.request.path)
+        if start >= 0 {
+            for i, param_name in route.pattern.param_names {
+                group_start := route.pattern.regex.groups[i * 2]
+                group_end := route.pattern.regex.groups[i * 2 + 1]
+                ctx.params[param_name] = ctx.request.path[group_start..group_end]
+            }
+            if handler := route.handler {
+                return handler(ctx)
+            }
         }
     }
     return ctx.not_found()
