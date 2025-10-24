@@ -8,7 +8,7 @@ pub struct Context {
 	veb.Context
 pub mut:
 	// Hikariライクなプロパティ
-	req    Request
+	request    Request
 	var    map[string]Any = map[string]Any{}
 	// 内部パラメータ
 	params map[string]string = map[string]string{}
@@ -60,7 +60,7 @@ pub fn (c Context) param(key string) string {
 
 // Hikariの c.req.query() と同じ
 pub fn (c Context) query(key string) ?string {
-	if val := c.req.query[key] {
+	if val := c.request.query[key] {
 		return val
 	}
 	return none
@@ -68,12 +68,12 @@ pub fn (c Context) query(key string) ?string {
 
 // Hikariの c.req.header() と同じ
 pub fn (c Context) header(key string) string {
-	return c.req.header[key.to_lower()] or { "" }
+	return c.request.header[key.to_lower()] or { "" }
 }
 
 // Hikariの c.req.json() と同じ
 pub fn (c Context) json_body[T]() !T {
-	return json.decode(T, c.req.body) or {
+	return json.decode(T, c.request.body) or {
 		return error("Failed to parse JSON: ${err}")
 	}
 }
