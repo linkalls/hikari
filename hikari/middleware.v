@@ -1,18 +1,25 @@
 module hikari
 
 import time
+import os
 import encoding.base64
 
 // Hikari風の組み込みミドルウェア（超シンプル）
 pub fn logger() Middleware {
-	return fn (c Context, next Next) !Response {
+	// By default do not print per-request logs (stdout is slow under high concurrency).
+	// Enable runtime logging with HIKARI_LOG=1 if you need human-readable logs.
+	debug := os.getenv_opt('HIKARI_LOG') or { '' } == '1'
+
+	return fn [debug] (mut c Context, next Next) !Response {
+		if !debug {
+			// Fast path: just call the next handler without measuring or printing.
+			return next()!
+		}
+
 		start := time.now()
-
 		res := next()!
-
 		duration := time.now() - start
 		println("[${time.now().format()}] ${c.request.method} ${c.request.path} - ${duration.milliseconds()}ms")
-
 		return res
 	}
 }
@@ -20,10 +27,11 @@ pub fn logger() Middleware {
 pub fn cors(options ...string) Middleware {
 	origins := if options.len > 0 { options[0] } else { "*" }
 
-	return fn [origins] (c Context, next Next) !Response {
+	return fn [origins] (mut c Context, next Next) !Response {
 		if c.request.method == "OPTIONS" {
 			return Response{
-				body: ""
+				body: "".bytes()
+				body_str: ""
 				status: 204
 				headers: {
 					"Access-Control-Allow-Origin": origins
@@ -40,12 +48,13 @@ pub fn cors(options ...string) Middleware {
 
 // Hikari風のbasic auth
 pub fn basic_auth(username string, password string) Middleware {
-	return fn [username, password] (c Context, next Next) !Response {
+	return fn [username, password] (mut c Context, next Next) !Response {
 		auth := c.header("Authorization")
 
 		if !auth.starts_with("Basic ") {
 			return Response{
-				body: "Unauthorized"
+				body: "Unauthorized".bytes()
+				body_str: "Unauthorized"
 				status: 401
 				headers: {"WWW-Authenticate": "Basic realm=\"Restricted\""}
 			}
@@ -57,7 +66,8 @@ pub fn basic_auth(username string, password string) Middleware {
 		parts := decoded.split(":")
 		if parts.len != 2 || parts[0] != username || parts[1] != password {
 			return Response{
-				body: "Unauthorized"
+				body: "Unauthorized".bytes()
+				body_str: "Unauthorized"
 				status: 401
 				headers: {"WWW-Authenticate": "Basic realm=\"Restricted\""}
 			}
