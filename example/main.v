@@ -4,7 +4,7 @@ import hikari
 fn main() {
     mut app := hikari.new()
     app.get('/', fn (mut c hikari.Context) !hikari.Response {
-        return hikari.hello_response()
+        return c.text("hello world")
     })
 
     app.get("/hello", fn (mut c hikari.Context) !hikari.Response {

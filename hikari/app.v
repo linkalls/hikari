@@ -3,6 +3,7 @@ module hikari
 import veb
 import regex
 import os
+import time
 // NOTE: we rely on Linux PR_SET_PDEATHSIG in the child for automatic
 // child termination when the parent dies. Parent-side signal handlers
 // can be added later for macOS/Windows if needed.
@@ -13,10 +14,19 @@ $if !windows {
 
 	fn C.signal(int, voidptr) voidptr
 	fn C.kill(int, int) int
+	fn C._exit(int)
+	fn C.getpgrp() int
+	fn C.setpgid(int, int) int
+	fn C.killpg(int, int) int
+	fn C.atexit(voidptr) int
 }
 
 $if windows {
 	// Windows: we'll shell out to taskkill when needed
+	#include <stdlib.h>
+
+	fn C.atexit(voidptr) int
+	fn C.exit(int)
 }
 
 $if linux {
@@ -121,6 +131,53 @@ mut:
 	// buffer pool for response reuse
 	pool         &BufferPool
 	internal_app ?&InternalVebApp
+}
+
+// POSIX signal handler: kill our whole process group on SIGINT/SIGTERM.
+// This avoids any module-level globals; children inherit the master's
+// process group and will receive the signal from the kernel.
+fn sig_handler(sig int) {
+	// On signal, perform our best-effort cleanup using the same routine
+	// used by Windows atexit fallback: read logs/children.pids and kill
+	// recorded child PIDs. Then exit.
+	exit_handler()
+	$if !windows {
+		C._exit(0)
+	} $else {
+		C.exit(0)
+	}
+}
+
+// V-friendly wrapper for os.signal handlers. Converts os.Signal to int
+fn sig_handler_wrapper(s os.Signal) {
+	sig_handler(int(s))
+}
+
+// atexit handler used on Windows as a best-effort fallback: taskkill children
+fn exit_handler() {
+	// Read recorded child PIDs and try to terminate them.
+	if !os.is_readable('logs/children.pids') {
+		return
+	}
+	content := os.read_file('logs/children.pids') or { return }
+	lines := content.split('\n')
+	for l in lines {
+		s := l.trim_space()
+		if s == '' {
+			continue
+		}
+		pid := s.int()
+		if pid <= 0 {
+			continue
+		}
+		$if windows {
+			_ := os.execute('taskkill /PID ${pid} /T /F')
+		} $else {
+			C.kill(pid, 15)
+		}
+	}
+	// try to remove the file after cleanup
+	os.rm('logs/children.pids') or {}
 }
 
 // Hikari()コンストラクタ
@@ -267,6 +324,11 @@ pub fn (mut app Hikari) fire(port ...int) ! {
 			os.mkdir('logs') or {}
 		}
 
+		// Do NOT change the master's process group here. Changing it may cause
+		// the terminal to stop delivering SIGINT (Ctrl+C) to this process.
+		// Instead we rely on recorded child PIDs (logs/children.pids) and
+		// the atexit/signal handlers to terminate children explicitly.
+
 		// record spawned pids in module-global so signal handler can access
 		mut spawned_pids := []int{}
 
@@ -275,6 +337,9 @@ pub fn (mut app Hikari) fire(port ...int) ! {
 			mut p := os.new_process(exe)
 			// pass CLI args to child
 			p.set_args(['--port', '${port_i}', '--hikari-child'])
+			// redirect child stdio to pipes so worker output doesn't pollute the
+			// master console. We'll drain the pipes in a background goroutine.
+			p.set_redirect_stdio()
 			// start the child process
 			p.run()
 			// check for runtime error recorded on Process struct
@@ -282,14 +347,48 @@ pub fn (mut app Hikari) fire(port ...int) ! {
 				eprintln('Hikari: failed to spawn worker for port ${port_i}: ${p.err}')
 				continue
 			}
+			// drain child's stdout/stderr in background to avoid filling pipes
+			// and keep the master console clean.
+			go fn (mut proc os.Process) {
+				for proc.is_alive() {
+					if proc.is_pending(.stdout) {
+						_ = proc.pipe_read(.stdout) or { continue }
+					}
+					if proc.is_pending(.stderr) {
+						_ = proc.pipe_read(.stderr) or { continue }
+					}
+					time.sleep(50 * time.millisecond)
+				}
+				proc.close()
+			}(mut p)
 			spawned_pids << p.pid
+			// Always append child PID to logs/children.pids so exit/atexit
+			// handlers can read and cleanup without relying on globals.
+			if !os.is_dir('logs') {
+				os.mkdir('logs') or {}
+			}
+			mut f := os.open_file('logs/children.pids', 'a') or { continue }
+			f.writeln('${p.pid}') or {}
+			f.close()
 		}
 
 		println('Hikari master: started ${workers} workers (pids=${spawned_pids}); parent will run in foreground on port ${server_port}')
 		// Continue on to run the current process as the foreground worker.
 	}
 
-	// parent-side signal handlers not registered here; rely on child PR_SET_PDEATHSIG (Linux)
+	// Register parent-side handlers for graceful cleanup of spawned children.
+	if !is_child {
+		$if !windows {
+			// Use V's os.signal_opt to reliably register handlers in the
+			// runtime (works better than binding C.signal directly).
+			_ := os.signal_opt(.int, sig_handler_wrapper) or { unsafe { nil } }
+			_ := os.signal_opt(.term, sig_handler_wrapper) or { unsafe { nil } }
+		} $else {
+			// Best-effort on Windows: register an atexit handler so that normal
+			// exits (or ctrl-close) attempt to kill spawned children via taskkill.
+			C.atexit(voidptr(exit_handler))
+		}
+	}
 
 	// Child or single-worker path: start internal veb app
 	mut internal := &InternalVebApp{
@@ -308,7 +407,10 @@ pub fn (mut app Hikari) fire(port ...int) ! {
 		}
 	}
 
-	println('🔥 Hikari server is running on port ${server_port} (worker)')
+	// Only print a startup message from the master; avoid noisy worker logs.
+	if !is_child {
+		println('🔥 Hikari master: running on port ${server_port}')
+	}
 
 	// vebで起動（内部実装）
 	veb.run[InternalVebApp, HikariContext](mut internal, server_port)
