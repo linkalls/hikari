@@ -32,7 +32,7 @@ pub fn (c Context) text(text string, status ...int) Response {
 	}
 }
 
-pub fn (c Context) json[T](object T, status ...int) Response {
+pub fn (c Context) json(object map[string]Any, status ...int) Response {
 	code := if status.len > 0 { status[0] } else { 200 }
 	json_str := json.encode(object)
 	return Response{

@@ -1,22 +1,61 @@
 module hikari
+
 import veb
 import regex
+import os
+
+// helper: detect workers and cli flags
+fn detect_workers() int {
+	// 1 explicit env
+	mut w := ''
+	w = os.getenv_opt('HIKARI_WORKERS') or { '' }
+	if w != '' {
+		val := w.int()
+		if val > 0 {
+			return val
+		}
+	}
+	// 2 HIKARI_MODE=dev -> 1
+	if (os.getenv_opt('HIKARI_MODE') or { '' }) == 'dev' {
+		return 1
+	}
+	// 3 try nproc
+	res := os.execute('nproc --all')
+	if res.exit_code == 0 {
+		out := res.output.trim_space()
+		if out != '' {
+			val := out.int()
+			if val > 0 {
+				return val
+			}
+		}
+	}
+	// 4 try /proc/cpuinfo
+	if os.is_readable('/proc/cpuinfo') {
+		txt := os.read_file('/proc/cpuinfo') or { return 1 }
+		cnt := txt.split('\n').filter(it.starts_with('processor')).len
+		if cnt > 0 {
+			return cnt
+		}
+	}
+	return 1
+}
 
 // Placeholder for Pattern struct
 struct Pattern {
-    raw_path string
+	raw_path string
 mut:
-    regex    regex.RE
-    param_names []string
+	regex       regex.RE
+	param_names []string
 }
 
 type PathOrMiddleware = string | Middleware
 
 struct Route {
 mut:
-	pattern Pattern
+	pattern     Pattern
 	middlewares []Middleware
-	handler ?Handler
+	handler     ?Handler
 }
 
 // Simple trie node for path segments. Supports static children and a single
@@ -29,12 +68,13 @@ pub mut:
 	// param_name is used when this node represents a parameter segment (stored under key ":")
 	param_name string
 	// handler + middlewares at this node (leaf)
-	handler ?Handler
+	handler     ?Handler
 	middlewares []Middleware
 }
+
 fn new_trienode() &TrieNode {
 	return &TrieNode{
-		children: map[string]&TrieNode{}
+		children:   map[string]&TrieNode{}
 		param_name: ''
 	}
 }
@@ -49,48 +89,51 @@ type HikariContext = Context
 
 pub struct Hikari {
 mut:
-	routes map[string][]Route
-	middlewares []Middleware
+	routes           map[string][]Route
+	middlewares      []Middleware
 	path_middlewares map[string][]Middleware
 	// exact_routes[method][path] -> Route for fast O(1) lookup of static paths
 	exact_routes map[string]map[string]Route
 	// tries[method] -> root of trie for parameterized routes
 	tries map[string]&TrieNode
+	// buffer pool for response reuse
+	pool         &BufferPool
 	internal_app ?&InternalVebApp
 }
 
 // Hikari()コンストラクタ
 pub fn new() &Hikari {
 	return &Hikari{
-		routes: map[string][]Route{}
+		routes:           map[string][]Route{}
 		path_middlewares: map[string][]Middleware{}
-		exact_routes: map[string]map[string]Route{}
-		tries: map[string]&TrieNode{}
+		exact_routes:     map[string]map[string]Route{}
+		tries:            map[string]&TrieNode{}
+		pool:             new_pool(512, 1024)
 	}
 }
 
 pub fn (mut app Hikari) get(path string, handler Handler, middlewares ...Middleware) &Hikari {
-	app.add_route("GET", path, handler, middlewares)
+	app.add_route('GET', path, handler, middlewares)
 	return app
 }
 
 pub fn (mut app Hikari) post(path string, handler Handler, middlewares ...Middleware) &Hikari {
-	app.add_route("POST", path, handler, middlewares)
+	app.add_route('POST', path, handler, middlewares)
 	return app
 }
 
 pub fn (mut app Hikari) put(path string, handler Handler, middlewares ...Middleware) &Hikari {
-	app.add_route("PUT", path, handler, middlewares)
+	app.add_route('PUT', path, handler, middlewares)
 	return app
 }
 
 pub fn (mut app Hikari) delete(path string, handler Handler, middlewares ...Middleware) &Hikari {
-	app.add_route("DELETE", path, handler, middlewares)
+	app.add_route('DELETE', path, handler, middlewares)
 	return app
 }
 
 pub fn (mut app Hikari) all(path string, handler Handler, middlewares ...Middleware) &Hikari {
-	methods := ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+	methods := ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
 	for method in methods {
 		app.add_route(method, path, handler, middlewares)
 	}
@@ -119,9 +162,9 @@ pub fn (mut app Hikari) route(path string, sub_app &Hikari) &Hikari {
 		for route in routes {
 			new_pattern := compile_pattern(path + route.pattern.raw_path)
 			new_route := Route{
-				pattern: new_pattern
+				pattern:     new_pattern
 				middlewares: route.middlewares
-				handler: route.handler
+				handler:     route.handler
 			}
 
 			if new_route.pattern.param_names.len == 0 {
@@ -143,9 +186,9 @@ pub fn (mut app Hikari) route(path string, sub_app &Hikari) &Hikari {
 		for p, r in exacts {
 			new_pattern := compile_pattern(path + r.pattern.raw_path)
 			new_route := Route{
-				pattern: new_pattern
+				pattern:     new_pattern
 				middlewares: r.middlewares
-				handler: r.handler
+				handler:     r.handler
 			}
 			if method !in app.exact_routes {
 				app.exact_routes[method] = map[string]Route{}
@@ -158,15 +201,73 @@ pub fn (mut app Hikari) route(path string, sub_app &Hikari) &Hikari {
 
 // Hikari風のサーバ起動（serve関数）
 pub fn (mut app Hikari) fire(port ...int) ! {
-	server_port := if port.len > 0 { port[0] } else { 3000 }
+	// determine server port: explicit arg > --port CLI > PORT env > 3000
+	mut server_port := if port.len > 0 { port[0] } else { 0 }
+	if server_port == 0 {
+		// search CLI args for --port
+		args := os.args
+		for i := 0; i < args.len; i++ {
+			if args[i] == '--port' && i + 1 < args.len {
+				server_port = args[i + 1].int()
+			}
+		}
+	}
+	if server_port == 0 {
+		mut p := ''
+		p = os.getenv_opt('PORT') or { '' }
+		if p != '' {
+			server_port = p.int()
+		}
+	}
+	if server_port == 0 {
+		server_port = 3000
+	}
 
-	// 内部vebアプリを作成（完全隠蔽）
+	// decide number of workers (framework-level)
+	mut workers := 1
+	// if caller passed explicit --hikari-child flag, treat this as child
+	is_child := (os.getenv_opt('HIKARI_CHILD') or { '' }) == '1' || '--hikari-child' in os.args
+	if !is_child {
+		// not a child: detect desired worker count
+		workers = detect_workers()
+	}
+
+	// If multiple workers requested and this is the master process, spawn children.
+	// Behaviour: spawn background workers for ports (server_port+1 ..) and keep
+	// the current process running in the foreground on `server_port`. This
+	// prevents the shell from immediately returning (server backgrounded) and
+	// avoids flooding the terminal with each child's stdout. Child stdout/stderr
+	// are redirected to `logs/worker_<port>.log`.
+	if workers > 1 && !is_child {
+		exe := os.executable()
+		// ensure logs dir exists for worker output
+		if !os.is_dir('logs') {
+			os.mkdir('logs') or {}
+		}
+
+		// Spawn background workers for ports server_port+1 .. server_port+(workers-1)
+		// Keep the parent process as the foreground worker on `server_port`.
+		for i in 1 .. workers {
+			port_i := server_port + i
+			// use nohup + shell backgrounding so the child detaches from terminal
+			// and its output goes to a per-worker logfile.
+			cmd := 'nohup ${exe} --port ${port_i} --hikari-child > logs/worker_${port_i}.log 2>&1 &'
+			// run via sh -c to interpret the & backgrounding
+			_ := os.execute('sh -c "${cmd}"')
+		}
+
+		// Print a single summary line instead of per-worker spawn logs.
+		println('Hikari master: started ${workers} workers; parent will run in foreground on port ${server_port}')
+		// Continue on to run the current process as the foreground worker.
+	}
+
+	// Child or single-worker path: start internal veb app
 	mut internal := &InternalVebApp{
 		hikari_app: app
 	}
 	app.internal_app = internal
 
-	println("🔥 Hikari server is running on port ${server_port}")
+	println('🔥 Hikari server is running on port ${server_port} (worker)')
 
 	// vebで起動（内部実装）
 	veb.run[InternalVebApp, HikariContext](mut internal, server_port)
@@ -175,9 +276,9 @@ pub fn (mut app Hikari) fire(port ...int) ! {
 // 内部実装
 fn (mut app Hikari) add_route(method string, path string, handler Handler, middlewares []Middleware) {
 	route := Route{
-		pattern: compile_pattern(path)
+		pattern:     compile_pattern(path)
 		middlewares: middlewares
-		handler: handler
+		handler:     handler
 	}
 
 	// If the route has no parameters, store it in exact_routes for O(1) lookup.
@@ -217,7 +318,9 @@ fn (mut app Hikari) add_route(method string, path string, handler Handler, middl
 	}
 
 	for seg in segs {
-		if seg.len == 0 { continue }
+		if seg.len == 0 {
+			continue
+		}
 		if seg[0] == `:` {
 			// parameter child stored under special key ':'
 			if ':' !in node.children {
@@ -241,20 +344,20 @@ fn (mut app Hikari) add_route(method string, path string, handler Handler, middl
 
 // Placeholder for add_middleware_with_path
 fn (mut app Hikari) add_middleware_with_path(path string, m Middleware) {
-    if path !in app.path_middlewares {
-        app.path_middlewares[path] = []Middleware{}
-    }
-    app.path_middlewares[path] << m
+	if path !in app.path_middlewares {
+		app.path_middlewares[path] = []Middleware{}
+	}
+	app.path_middlewares[path] << m
 }
 
-@["/:path..."]
+@['/:path...']
 fn (mut internal InternalVebApp) handle_all(mut veb_ctx veb.Context, path string) veb.Result {
 	mut hikari_ctx := create_hikari_context(veb_ctx, path)
 	mut response := Response{}
 
 	// Hikariアプリでリクエスト処理
 	response = internal.hikari_app.handle_request(mut hikari_ctx) or {
-		return veb_ctx.text("Internal Server Error")
+		return veb_ctx.text('Internal Server Error')
 	}
 
 	// Hikariレスポンスをveb.Resultに変換
@@ -263,21 +366,35 @@ fn (mut internal InternalVebApp) handle_all(mut veb_ctx veb.Context, path string
 	}
 	veb_ctx.res.status_code = response.status
 	// Prefer cached body_str to avoid bytes->string conversion at send time.
-	if response.body_str != "" {
+	if response.body_str != '' {
+		// recycle buffer back to pool
+		if response.body.len > 0 {
+			mut p := internal.hikari_app.pool
+			p.give(mut response.body)
+		}
 		return veb_ctx.text(response.body_str)
 	}
-	return veb_ctx.text(response.body.bytestr())
+
+	// convert bytes to string for veb and then recycle buffer
+	s := response.body.bytestr()
+	if response.body.len > 0 {
+		mut p := internal.hikari_app.pool
+		p.give(mut response.body)
+	}
+	return veb_ctx.text(s)
 }
 
-@["/"]
+@['/']
 fn (mut internal InternalVebApp) index(mut veb_ctx veb.Context) veb.Result {
-	return internal.handle_all(mut veb_ctx, "/")
+	return internal.handle_all(mut veb_ctx, '/')
 }
 
 // 内部変換関数（完全隠蔽）
 fn create_hikari_context(veb_ctx veb.Context, path string) Context {
-	request_path := if path == "" { "/" } else {
-		if path.starts_with("/") { path } else { "/${path}" }
+	request_path := if path == '' {
+		'/'
+	} else {
+		if path.starts_with('/') { path } else { '/${path}' }
 	}
 
 	// Avoid copying all headers into a new map per-request —
@@ -286,36 +403,36 @@ fn create_hikari_context(veb_ctx veb.Context, path string) Context {
 	// allocations which can help with GC/latency spikes under load.
 	req := Request{
 		method: veb_ctx.req.method.str()
-		url: veb_ctx.req.url
-		path: request_path
-		query: veb_ctx.query
+		url:    veb_ctx.req.url
+		path:   request_path
+		query:  veb_ctx.query
 		header: map[string]string{}
-		body: veb_ctx.req.data
+		body:   veb_ctx.req.data
 	}
 
 	return Context{
-		Context: veb_ctx,
-		request: req,
-		var: map[string]Any{},
+		Context: veb_ctx
+		request: req
+		var:     map[string]Any{}
 	}
 }
 
 // Placeholder for compile_pattern function
 fn compile_pattern(path string) Pattern {
-    mut param_names := []string{}
-    mut regex_path := path
-    mut re := regex.regex_opt(r":(\w+)") or { panic(err) }
-    matches := re.find_all_str(path)
-    for m in matches {
-        param_name := m.replace(":", "")
-        param_names << param_name
-        regex_path = regex_path.replace(m, r"(\w+)")
-    }
-    return Pattern{
-        raw_path: path,
-        regex: regex.regex_opt(regex_path + "$") or { panic(err) },
-        param_names: param_names
-    }
+	mut param_names := []string{}
+	mut regex_path := path
+	mut re := regex.regex_opt(r':(\w+)') or { panic(err) }
+	matches := re.find_all_str(path)
+	for m in matches {
+		param_name := m.replace(':', '')
+		param_names << param_name
+		regex_path = regex_path.replace(m, r'(\w+)')
+	}
+	return Pattern{
+		raw_path:    path
+		regex:       regex.regex_opt(regex_path + '$') or { panic(err) }
+		param_names: param_names
+	}
 }
 
 // Placeholder for handle_request method
@@ -350,12 +467,14 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 		if segs.len == 0 {
 			// root
 			if node.handler != none {
-				return node.handler!(mut ctx)
+				return node.handler(mut ctx)
 			}
 		} else {
 			mut matched := true
 			for seg in segs {
-				if seg.len == 0 { continue }
+				if seg.len == 0 {
+					continue
+				}
 				if seg in node.children {
 					node = node.children[seg] or { new_trienode() }
 					continue
@@ -371,7 +490,7 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 				break
 			}
 			if matched && node.handler != none {
-				return node.handler!(mut ctx)
+				return node.handler(mut ctx)
 			}
 		}
 	}
