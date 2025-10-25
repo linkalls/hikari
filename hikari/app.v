@@ -3,6 +3,28 @@ module hikari
 import veb
 import regex
 import os
+// NOTE: we rely on Linux PR_SET_PDEATHSIG in the child for automatic
+// child termination when the parent dies. Parent-side signal handlers
+// can be added later for macOS/Windows if needed.
+
+$if !windows {
+	// POSIX interop
+	#include <signal.h>
+
+	fn C.signal(int, voidptr) voidptr
+	fn C.kill(int, int) int
+}
+
+$if windows {
+	// Windows: we'll shell out to taskkill when needed
+}
+
+$if linux {
+	#include <sys/prctl.h>
+	#include <signal.h>
+
+	fn C.prctl(int, int, int, int, int) int
+}
 
 // helper: detect workers and cli flags
 fn detect_workers() int {
@@ -233,39 +255,58 @@ pub fn (mut app Hikari) fire(port ...int) ! {
 	}
 
 	// If multiple workers requested and this is the master process, spawn children.
-	// Behaviour: spawn background workers for ports (server_port+1 ..) and keep
-	// the current process running in the foreground on `server_port`. This
-	// prevents the shell from immediately returning (server backgrounded) and
-	// avoids flooding the terminal with each child's stdout. Child stdout/stderr
-	// are redirected to `logs/worker_<port>.log`.
+	// Behaviour: spawn child processes directly (not via shell/nohup) so that
+	// they are real child processes of this master. In addition, child
+	// processes set PR_SET_PDEATHSIG (Linux) so the kernel will send them a
+	// SIGTERM if the parent dies — this makes sure children don't become orphans
+	// when the master is killed.
 	if workers > 1 && !is_child {
 		exe := os.executable()
-		// ensure logs dir exists for worker output
+		// ensure logs dir exists for worker output (kept for compatibility)
 		if !os.is_dir('logs') {
 			os.mkdir('logs') or {}
 		}
 
-		// Spawn background workers for ports server_port+1 .. server_port+(workers-1)
-		// Keep the parent process as the foreground worker on `server_port`.
+		// record spawned pids in module-global so signal handler can access
+		mut spawned_pids := []int{}
+
 		for i in 1 .. workers {
 			port_i := server_port + i
-			// use nohup + shell backgrounding so the child detaches from terminal
-			// and its output goes to a per-worker logfile.
-			cmd := 'nohup ${exe} --port ${port_i} --hikari-child > logs/worker_${port_i}.log 2>&1 &'
-			// run via sh -c to interpret the & backgrounding
-			_ := os.execute('sh -c "${cmd}"')
+			mut p := os.new_process(exe)
+			// pass CLI args to child
+			p.set_args(['--port', '${port_i}', '--hikari-child'])
+			// start the child process
+			p.run()
+			// check for runtime error recorded on Process struct
+			if p.status != .running && p.pid == 0 {
+				eprintln('Hikari: failed to spawn worker for port ${port_i}: ${p.err}')
+				continue
+			}
+			spawned_pids << p.pid
 		}
 
-		// Print a single summary line instead of per-worker spawn logs.
-		println('Hikari master: started ${workers} workers; parent will run in foreground on port ${server_port}')
+		println('Hikari master: started ${workers} workers (pids=${spawned_pids}); parent will run in foreground on port ${server_port}')
 		// Continue on to run the current process as the foreground worker.
 	}
+
+	// parent-side signal handlers not registered here; rely on child PR_SET_PDEATHSIG (Linux)
 
 	// Child or single-worker path: start internal veb app
 	mut internal := &InternalVebApp{
 		hikari_app: app
 	}
 	app.internal_app = internal
+
+	// If this process was invoked as a child, set PR_SET_PDEATHSIG so the kernel
+	// sends us SIGTERM when our parent dies. This makes worker termination
+	// deterministic if the master process is killed. Only applied on Linux.
+	if is_child {
+		$if linux {
+			// PR_SET_PDEATHSIG == 1, SIGTERM == 15 on POSIX — call prctl
+			// Note: we don't fail if prctl is unavailable; it's a best-effort safety.
+			C.prctl(1, 15, 0, 0, 0)
+		}
+	}
 
 	println('🔥 Hikari server is running on port ${server_port} (worker)')
 

@@ -25,6 +25,13 @@ fn main() {
         return c.json({"message": "Hello from /$id/$aa endpoint!"})
     })
 
+    app.get("/aa/:name/aa/:q",fn (mut c hikari.Context) !hikari.Response {
+        name := c.param("name")
+        q := c.param("q")
+        println("Received Name: $name, Query: $q")
+        return c.json({"message": "Hello from $name $q endpoint!"})
+    })
+
     app.use(hikari.logger())
 
     // Let framework decide port/workers; you can still pass a port via CLI
