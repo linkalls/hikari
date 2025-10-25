@@ -280,27 +280,29 @@ fn (mut app Hikari) add_route(method string, path string, handler Handler, middl
 		middlewares: middlewares
 		handler:     handler
 	}
+	// normalize method to uppercase for consistent map keys
+	m := method.to_upper()
 
 	// If the route has no parameters, store it in exact_routes for O(1) lookup.
 	if route.pattern.param_names.len == 0 {
-		if method !in app.exact_routes {
-			app.exact_routes[method] = map[string]Route{}
+		if m !in app.exact_routes {
+			app.exact_routes[m] = map[string]Route{}
 		}
-		app.exact_routes[method][path] = route
+		app.exact_routes[m][path] = route
 		return
 	}
 
 	// Parameterized route: insert into per-method trie for fast lookup.
 	// Initialize trie root if needed.
-	if method !in app.tries {
-		app.tries[method] = new_trienode()
+	if m !in app.tries {
+		app.tries[m] = new_trienode()
 	}
 
 	// Insert path segments into trie. Example: /users/:id/posts -> ["users",":id","posts"]
 	// get or create trie root for this method
-	mut node := app.tries[method] or { new_trienode() }
-	if method !in app.tries {
-		app.tries[method] = node
+	mut node := app.tries[m] or { new_trienode() }
+	if m !in app.tries {
+		app.tries[m] = node
 	}
 
 	// trim leading '/'
@@ -402,7 +404,7 @@ fn create_hikari_context(veb_ctx veb.Context, path string) Context {
 	// embedded veb.Context on demand. This reduces per-request
 	// allocations which can help with GC/latency spikes under load.
 	req := Request{
-		method: veb_ctx.req.method.str()
+		method: veb_ctx.req.method.str().to_upper()
 		url:    veb_ctx.req.url
 		path:   request_path
 		query:  veb_ctx.query
@@ -437,7 +439,7 @@ fn compile_pattern(path string) Pattern {
 
 // Placeholder for handle_request method
 pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
-	method := ctx.request.method
+	method := ctx.request.method.to_upper()
 
 	// 1) Exact-match fast path using exact_routes map
 	if method in app.exact_routes {
