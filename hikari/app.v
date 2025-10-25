@@ -3,7 +3,6 @@ module hikari
 import veb
 import regex
 import os
-import time
 // NOTE: we rely on Linux PR_SET_PDEATHSIG in the child for automatic
 // child termination when the parent dies. Parent-side signal handlers
 // can be added later for macOS/Windows if needed.
@@ -51,7 +50,15 @@ fn detect_workers() int {
 	if (os.getenv_opt('HIKARI_MODE') or { '' }) == 'dev' {
 		return 1
 	}
-	// 3 try nproc
+	// 3 try /proc/cpuinfo first (avoids spawning a shell)
+	if os.is_readable('/proc/cpuinfo') {
+		txt := os.read_file('/proc/cpuinfo') or { return 1 }
+		cnt := txt.split('\n').filter(it.starts_with('processor')).len
+		if cnt > 0 {
+			return cnt
+		}
+	}
+	// 4 fallback: try nproc if available
 	res := os.execute('nproc --all')
 	if res.exit_code == 0 {
 		out := res.output.trim_space()
@@ -60,14 +67,6 @@ fn detect_workers() int {
 			if val > 0 {
 				return val
 			}
-		}
-	}
-	// 4 try /proc/cpuinfo
-	if os.is_readable('/proc/cpuinfo') {
-		txt := os.read_file('/proc/cpuinfo') or { return 1 }
-		cnt := txt.split('\n').filter(it.starts_with('processor')).len
-		if cnt > 0 {
-			return cnt
 		}
 	}
 	return 1
@@ -182,12 +181,29 @@ fn exit_handler() {
 
 // Hikari()コンストラクタ
 pub fn new() &Hikari {
+	// Allow overriding pool parameters via env for experimentation without
+	// changing source. Environment variables:
+	//   HIKARI_POOL_BUF  (default 1024)
+	//   HIKARI_POOL_COUNT (default 2048)
+	mut buf_size := 1024
+	mut buf_count := 2048
+	if v := os.getenv_opt('HIKARI_POOL_BUF') {
+		if v != '' {
+			buf_size = v.int()
+		}
+	}
+	if v := os.getenv_opt('HIKARI_POOL_COUNT') {
+		if v != '' {
+			buf_count = v.int()
+		}
+	}
+
 	return &Hikari{
 		routes:           map[string][]Route{}
 		path_middlewares: map[string][]Middleware{}
 		exact_routes:     map[string]map[string]Route{}
 		tries:            map[string]&TrieNode{}
-		pool:             new_pool(512, 1024)
+		pool:             new_pool(buf_size, buf_count)
 	}
 }
 
@@ -334,41 +350,54 @@ pub fn (mut app Hikari) fire(port ...int) ! {
 
 		for i in 1 .. workers {
 			port_i := server_port + i
-			mut p := os.new_process(exe)
-			// pass CLI args to child
-			p.set_args(['--port', '${port_i}', '--hikari-child'])
-			// redirect child stdio to pipes so worker output doesn't pollute the
-			// master console. We'll drain the pipes in a background goroutine.
-			p.set_redirect_stdio()
-			// start the child process
-			p.run()
+			// Allow optionally redirecting child stdio to /dev/null to avoid any
+			// stdio contention under high load. Set HIKARI_CHILD_STDIO=devnull to
+			// enable this behavior. Default is to use os.new_process (inherit
+			// parent's stdio) which avoids shells and extra overhead.
+			mut child_pid := 0
+			if (os.getenv_opt('HIKARI_CHILD_STDIO') or { '' }) == 'devnull' {
+				// Start the child detached with stdout/stderr redirected to /dev/null.
+				// Use nohup via the shell; os.execute already runs via /bin/sh -c so
+				// quoting exe with " is sufficient to handle spaces in the path.
+				cmd := 'nohup "' + exe +
+					'" --port ${port_i} --hikari-child > /dev/null 2>&1 & echo $!'
+				res := os.execute(cmd)
+				if res.exit_code == 0 {
+					out := res.output.trim_space()
+					if out != '' {
+						child_pid = out.int()
+					}
+				} else {
+					eprintln('Hikari: failed to spawn worker (devnull mode) for port ${port_i}: ${res.output}')
+				}
+			} else {
+				mut p := os.new_process(exe)
+				// pass CLI args to child
+				p.set_args(['--port', '${port_i}', '--hikari-child'])
+				// start the child process without redirecting stdio to avoid pipe
+				// overhead under high load. Child output will inherit the parent's
+				// stdout/stderr (we disable noisy logs in examples during perf tests).
+				p.run()
+				// If run failed, p.err may contain useful info; log it for debugging.
+				if p.status == .running && p.pid > 0 {
+					child_pid = p.pid
+				} else {
+					eprintln('Hikari: failed to spawn worker for port ${port_i}: ${p.err}')
+				}
+			}
 			// check for runtime error recorded on Process struct
-			if p.status != .running && p.pid == 0 {
-				eprintln('Hikari: failed to spawn worker for port ${port_i}: ${p.err}')
+			if child_pid == 0 {
+				eprintln('Hikari: failed to spawn worker for port ${port_i}')
 				continue
 			}
-			// drain child's stdout/stderr in background to avoid filling pipes
-			// and keep the master console clean.
-			go fn (mut proc os.Process) {
-				for proc.is_alive() {
-					if proc.is_pending(.stdout) {
-						_ = proc.pipe_read(.stdout) or { continue }
-					}
-					if proc.is_pending(.stderr) {
-						_ = proc.pipe_read(.stderr) or { continue }
-					}
-					time.sleep(50 * time.millisecond)
-				}
-				proc.close()
-			}(mut p)
-			spawned_pids << p.pid
+			spawned_pids << child_pid
 			// Always append child PID to logs/children.pids so exit/atexit
 			// handlers can read and cleanup without relying on globals.
 			if !os.is_dir('logs') {
 				os.mkdir('logs') or {}
 			}
 			mut f := os.open_file('logs/children.pids', 'a') or { continue }
-			f.writeln('${p.pid}') or {}
+			f.writeln('${child_pid}') or {}
 			f.close()
 		}
 
@@ -408,8 +437,12 @@ pub fn (mut app Hikari) fire(port ...int) ! {
 	}
 
 	// Only print a startup message from the master; avoid noisy worker logs.
+	// Gate master startup message behind HIKARI_LOG so benchmarks can run
+	// without extra stdout contention.
 	if !is_child {
-		println('🔥 Hikari master: running on port ${server_port}')
+		if (os.getenv_opt('HIKARI_LOG') or { '' }) == '1' {
+			println('🔥 Hikari master: running on port ${server_port}')
+		}
 	}
 
 	// vebで起動（内部実装）

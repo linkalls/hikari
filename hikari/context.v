@@ -53,12 +53,10 @@ pub fn (c Context) html(html string, status ...int) Response {
 	}
 }
 
-// Hikariの c.req.param() と同じ
 pub fn (c Context) param(key string) string {
 	return c.params[key] or { "" }
 }
 
-// Hikariの c.req.query() と同じ
 pub fn (c Context) query(key string) ?string {
 	if val := c.request.query[key] {
 		return val
@@ -66,7 +64,6 @@ pub fn (c Context) query(key string) ?string {
 	return none
 }
 
-// Hikariの c.req.header() と同じ
 pub fn (c Context) header(key string) string {
 	// Prefer any prepopulated header (kept for compatibility),
 	// otherwise query the embedded veb.Context lazily to avoid
@@ -80,14 +77,12 @@ pub fn (c Context) header(key string) string {
 	return c.Context.req.header.get_custom(key) or { "" }
 }
 
-// Hikariの c.req.json() と同じ
 pub fn (c Context) json_body[T]() !T {
 	return json.decode(T, c.request.body) or {
 		return error("Failed to parse JSON: ${err}")
 	}
 }
 
-// Hikariの c.set() / c.get() と同じ
 pub fn (mut c Context) set(key string, value Any) {
 	c.var[key] = value
 }
