@@ -6,8 +6,8 @@ import veb
 pub struct Context {
 	veb.Context
 pub mut:
-	request    Request
-	var    map[string]Any = map[string]Any{}
+	request Request
+	var     map[string]Any = map[string]Any{}
 	// 内部パラメータ
 	params map[string]string = map[string]string{}
 }
@@ -25,10 +25,12 @@ pub:
 pub fn (c Context) text(text string, status ...int) Response {
 	code := if status.len > 0 { status[0] } else { 200 }
 	return Response{
-		body: text.bytes()
+		body:     []u8{}
 		body_str: text
-		status: code
-		headers: {"Content-Type": "text/plain; charset=UTF-8"}
+		status:   code
+		headers:  {
+			'Content-Type': 'text/plain; charset=UTF-8'
+		}
 	}
 }
 
@@ -36,25 +38,29 @@ pub fn (c Context) json(object map[string]Any, status ...int) Response {
 	code := if status.len > 0 { status[0] } else { 200 }
 	json_str := json.encode(object)
 	return Response{
-		body: json_str.bytes()
+		body:     []u8{}
 		body_str: json_str
-		status: code
-		headers: {"Content-Type": "application/json; charset=UTF-8"}
+		status:   code
+		headers:  {
+			'Content-Type': 'application/json; charset=UTF-8'
+		}
 	}
 }
 
 pub fn (c Context) html(html string, status ...int) Response {
 	code := if status.len > 0 { status[0] } else { 200 }
 	return Response{
-		body: html.bytes()
+		body:     []u8{}
 		body_str: html
-		status: code
-		headers: {"Content-Type": "text/html; charset=UTF-8"}
+		status:   code
+		headers:  {
+			'Content-Type': 'text/html; charset=UTF-8'
+		}
 	}
 }
 
 pub fn (c Context) param(key string) string {
-	return c.params[key] or { "" }
+	return c.params[key] or { '' }
 }
 
 pub fn (c Context) query(key string) ?string {
@@ -74,13 +80,11 @@ pub fn (c Context) header(key string) string {
 
 	// Try to read from the embedded veb.Context header store.
 	// Use get_custom like other code paths: returns empty on error.
-	return c.Context.req.header.get_custom(key) or { "" }
+	return c.Context.req.header.get_custom(key) or { '' }
 }
 
 pub fn (c Context) json_body[T]() !T {
-	return json.decode(T, c.request.body) or {
-		return error("Failed to parse JSON: ${err}")
-	}
+	return json.decode(T, c.request.body) or { return error('Failed to parse JSON: ${err}') }
 }
 
 pub fn (mut c Context) set(key string, value Any) {
@@ -98,15 +102,17 @@ pub fn (c Context) get[T](key string) ?T {
 
 // エラーレスポンス（Hikari風）
 pub fn (c Context) not_found() Response {
-	return c.text("Not Found", 404)
+	return c.text('Not Found', 404)
 }
 
 pub fn (c Context) redirect(location string, status ...int) Response {
 	code := if status.len > 0 { status[0] } else { 302 }
 	return Response{
-		body: "".bytes()
-		body_str: ""
-		status: code
-		headers: {"Location": location}
+		body:     ''.bytes()
+		body_str: ''
+		status:   code
+		headers:  {
+			'Location': location
+		}
 	}
 }

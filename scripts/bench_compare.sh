@@ -80,9 +80,46 @@ run_single() {
   # parse last Reqs/sec and last Latency lines
   reqs_line=$(grep "Reqs/sec" "$tmpfile" | tail -n1 || true)
   latency_line=$(grep "Latency" "$tmpfile" | tail -n1 || true)
-
   reqs_val="N/A"
   latency_val="N/A"
   if [ -n "$reqs_line" ]; then
     # second column contains numeric value (may include decimals)
-    reqs_val=$(echo "$reqs_line" | awk {print
+    reqs_val=$(echo "$reqs_line" | awk '{print $2}')
+  fi
+  if [ -n "$latency_line" ]; then
+    # Latency typically in 2nd column (may include units)
+    latency_val=$(echo "$latency_line" | awk '{print $2}')
+  fi
+
+  # human-friendly displays
+  display_workers="${workers:-auto}"
+  if [ "${child_stdio}" = "devnull" ]; then
+    display_stdio="devnull"
+  else
+    display_stdio="inherit"
+  fi
+
+  # append result row
+  echo "| ${pool_buf}:${pool_count} | ${pool_buf} | ${pool_count} | ${display_workers} | ${display_stdio} | ${reqs_val} | ${latency_val} |" >> "$OUTFILE"
+
+  # cleanup for this run
+  bash scripts/stop_workers.sh || true
+  rm -f "$tmpfile" || true
+  return 0
+
+}
+
+# Driver: run combinations of pool sizes and a couple worker/stdio modes
+workers_list=("" "1")
+child_stdio_list=("inherit" "devnull")
+
+for pool in "${pool_sizes[@]}"; do
+  IFS=':' read -r pool_buf pool_count <<< "$pool"
+  for w in "${workers_list[@]}"; do
+    for cs in "${child_stdio_list[@]}"; do
+      run_single "$w" "$cs" "$pool_buf" "$pool_count" || true
+      # small cooldown between runs
+      sleep 1
+    done
+  done
+done
