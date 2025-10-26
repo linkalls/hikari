@@ -63,7 +63,7 @@ if [ "$ok" -ne 1 ]; then
 fi
 
 echo "Warmup..."
-bombardier --fasthttp -d 5s -c 100 http://localhost:3000/
+bombardier --fasthttp -d 5s -c 100 http://localhost:3000/hello
 
 echo "Benchmark..."
 bombardier --fasthttp -d 10s -c 100 http://localhost:3000/

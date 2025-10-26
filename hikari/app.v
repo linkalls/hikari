@@ -1,8 +1,8 @@
 module hikari
 
 import veb
-import regex
 import os
+
 // NOTE: we rely on Linux PR_SET_PDEATHSIG in the child for automatic
 // child termination when the parent dies. Parent-side signal handlers
 // can be added later for macOS/Windows if needed.
@@ -72,43 +72,7 @@ fn detect_workers() int {
 	return 1
 }
 
-// Placeholder for Pattern struct
-struct Pattern {
-	raw_path string
-mut:
-	regex       regex.RE
-	param_names []string
-}
-
 type PathOrMiddleware = string | Middleware
-
-struct Route {
-mut:
-	pattern     Pattern
-	middlewares []Middleware
-	handler     ?Handler
-}
-
-// Simple trie node for path segments. Supports static children and a single
-// parameter child per node (e.g. ":id"). This keeps implementation small
-// while providing large speedups vs regex for common parameterized routes.
-pub struct TrieNode {
-pub mut:
-	// static segment -> child
-	children map[string]&TrieNode
-	// param_name is used when this node represents a parameter segment (stored under key ":")
-	param_name string
-	// handler + middlewares at this node (leaf)
-	handler     ?Handler
-	middlewares []Middleware
-}
-
-fn new_trienode() &TrieNode {
-	return &TrieNode{
-		children:   map[string]&TrieNode{}
-		param_name: ''
-	}
-}
 
 pub struct InternalVebApp {
 mut:
@@ -449,76 +413,7 @@ pub fn (mut app Hikari) fire(port ...int) ! {
 	veb.run[InternalVebApp, HikariContext](mut internal, server_port)
 }
 
-// 内部実装
-fn (mut app Hikari) add_route(method string, path string, handler Handler, middlewares []Middleware) {
-	route := Route{
-		pattern:     compile_pattern(path)
-		middlewares: middlewares
-		handler:     handler
-	}
-	// normalize method to uppercase for consistent map keys
-	m := method.to_upper()
 
-	// If the route has no parameters, store it in exact_routes for O(1) lookup.
-	if route.pattern.param_names.len == 0 {
-		if m !in app.exact_routes {
-			app.exact_routes[m] = map[string]Route{}
-		}
-		app.exact_routes[m][path] = route
-		return
-	}
-
-	// Parameterized route: insert into per-method trie for fast lookup.
-	// Initialize trie root if needed.
-	if m !in app.tries {
-		app.tries[m] = new_trienode()
-	}
-
-	// Insert path segments into trie. Example: /users/:id/posts -> ["users",":id","posts"]
-	// get or create trie root for this method
-	mut node := app.tries[m] or { new_trienode() }
-	if m !in app.tries {
-		app.tries[m] = node
-	}
-
-	// trim leading '/'
-	mut trimmed := path
-	if trimmed.len > 0 && trimmed[0] == `/` {
-		trimmed = trimmed[1..]
-	}
-	segs := if trimmed == '' { []string{} } else { trimmed.split('/') }
-
-	if segs.len == 0 {
-		// root path
-		node.handler = handler
-		node.middlewares = middlewares
-		return
-	}
-
-	for seg in segs {
-		if seg.len == 0 {
-			continue
-		}
-		if seg[0] == `:` {
-			// parameter child stored under special key ':'
-			if ':' !in node.children {
-				mut child := new_trienode()
-				child.param_name = if seg.len > 1 { seg[1..] } else { '' }
-				node.children[':'] = child
-			}
-			node = node.children[':'] or { new_trienode() }
-		} else {
-			if seg !in node.children {
-				node.children[seg] = new_trienode()
-			}
-			node = node.children[seg] or { new_trienode() }
-		}
-	}
-	node.handler = handler
-	node.middlewares = middlewares
-	node.handler = handler
-	node.middlewares = middlewares
-}
 
 // Placeholder for add_middleware_with_path
 fn (mut app Hikari) add_middleware_with_path(path string, m Middleware) {
@@ -530,7 +425,7 @@ fn (mut app Hikari) add_middleware_with_path(path string, m Middleware) {
 
 @['/:path...']
 fn (mut internal InternalVebApp) handle_all(mut veb_ctx veb.Context, path string) veb.Result {
-	mut hikari_ctx := create_hikari_context(veb_ctx, path)
+	mut hikari_ctx := create_hikari_context(veb_ctx, path, internal.hikari_app.pool)
 	mut response := Response{}
 
 	// Hikariアプリでリクエスト処理
@@ -543,17 +438,8 @@ fn (mut internal InternalVebApp) handle_all(mut veb_ctx veb.Context, path string
 		veb_ctx.set_custom_header(key, value) or {}
 	}
 	veb_ctx.res.status_code = response.status
-	// Prefer cached body_str to avoid bytes->string conversion at send time.
-	if response.body_str != '' {
-		// recycle buffer back to pool
-		if response.body.len > 0 {
-			mut p := internal.hikari_app.pool
-			p.give(mut response.body)
-		}
-		return veb_ctx.text(response.body_str)
-	}
-
 	// convert bytes to string for veb and then recycle buffer
+	// This path is now the primary path for all pooled responses.
 	s := response.body.bytestr()
 	if response.body.len > 0 {
 		mut p := internal.hikari_app.pool
@@ -568,7 +454,7 @@ fn (mut internal InternalVebApp) index(mut veb_ctx veb.Context) veb.Result {
 }
 
 // 内部変換関数（完全隠蔽）
-fn create_hikari_context(veb_ctx veb.Context, path string) Context {
+fn create_hikari_context(veb_ctx veb.Context, path string, pool &BufferPool) Context {
 	request_path := if path == '' {
 		'/'
 	} else {
@@ -590,88 +476,12 @@ fn create_hikari_context(veb_ctx veb.Context, path string) Context {
 
 	return Context{
 		Context: veb_ctx
+		pool:    pool
 		request: req
 		var:     map[string]Any{}
 	}
 }
 
-// Placeholder for compile_pattern function
-fn compile_pattern(path string) Pattern {
-	mut param_names := []string{}
-	mut regex_path := path
-	mut re := regex.regex_opt(r':(\w+)') or { panic(err) }
-	matches := re.find_all_str(path)
-	for m in matches {
-		param_name := m.replace(':', '')
-		param_names << param_name
-		regex_path = regex_path.replace(m, r'(\w+)')
-	}
-	return Pattern{
-		raw_path:    path
-		regex:       regex.regex_opt(regex_path + '$') or { panic(err) }
-		param_names: param_names
-	}
-}
 
-// Placeholder for handle_request method
-pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
-	method := ctx.request.method.to_upper()
 
-	// 1) Exact-match fast path using exact_routes map
-	if method in app.exact_routes {
-		if m := app.exact_routes[method] {
-			if route := m[ctx.request.path] { // zero-value check: Route is a struct
-				if handler := route.handler {
-					return handler(mut ctx)
-				}
-			}
-		}
-	}
 
-	// 2) Fallback: match against trie for parameterized routes
-	if method in app.tries {
-		mut node := app.tries[method] or { new_trienode() }
-		if method !in app.tries {
-			app.tries[method] = node
-		}
-
-		// trim leading '/'
-		mut trimmed := ctx.request.path
-		if trimmed.len > 0 && trimmed[0] == `/` {
-			trimmed = trimmed[1..]
-		}
-		segs := if trimmed == '' { []string{} } else { trimmed.split('/') }
-
-		if segs.len == 0 {
-			// root
-			if node.handler != none {
-				return node.handler(mut ctx)
-			}
-		} else {
-			mut matched := true
-			for seg in segs {
-				if seg.len == 0 {
-					continue
-				}
-				if seg in node.children {
-					node = node.children[seg] or { new_trienode() }
-					continue
-				}
-				if ':' in node.children {
-					// parameter child
-					mut child := node.children[':'] or { new_trienode() }
-					ctx.params[child.param_name] = seg
-					node = child
-					continue
-				}
-				matched = false
-				break
-			}
-			if matched && node.handler != none {
-				return node.handler(mut ctx)
-			}
-		}
-	}
-
-	return ctx.not_found()
-}

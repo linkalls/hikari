@@ -6,6 +6,8 @@ import veb
 pub struct Context {
 	veb.Context
 pub mut:
+	// pool for response buffer reuse
+	pool    &BufferPool
 	request Request
 	var     map[string]Any = map[string]Any{}
 	// 内部パラメータ
@@ -22,11 +24,14 @@ pub:
 	body   string
 }
 
-pub fn (c Context) text(text string, status ...int) Response {
+pub fn (mut c Context) text(text string, status ...int) Response {
 	code := if status.len > 0 { status[0] } else { 200 }
+	mut buf := c.pool.rent()
+	buf.clear()
+	buf << text.bytes()
 	return Response{
-		body:     []u8{}
-		body_str: text
+		body:     buf
+		body_str: '' // body_str is now deprecated in favor of pooled body
 		status:   code
 		headers:  {
 			'Content-Type': 'text/plain; charset=UTF-8'
@@ -34,12 +39,15 @@ pub fn (c Context) text(text string, status ...int) Response {
 	}
 }
 
-pub fn (c Context) json(object map[string]Any, status ...int) Response {
+pub fn (mut c Context) json(object map[string]Any, status ...int) Response {
 	code := if status.len > 0 { status[0] } else { 200 }
 	json_str := json.encode(object)
+	mut buf := c.pool.rent()
+	buf.clear()
+	buf << json_str.bytes()
 	return Response{
-		body:     []u8{}
-		body_str: json_str
+		body:     buf
+		body_str: ''
 		status:   code
 		headers:  {
 			'Content-Type': 'application/json; charset=UTF-8'
@@ -47,11 +55,14 @@ pub fn (c Context) json(object map[string]Any, status ...int) Response {
 	}
 }
 
-pub fn (c Context) html(html string, status ...int) Response {
+pub fn (mut c Context) html(html string, status ...int) Response {
 	code := if status.len > 0 { status[0] } else { 200 }
+	mut buf := c.pool.rent()
+	buf.clear()
+	buf << html.bytes()
 	return Response{
-		body:     []u8{}
-		body_str: html
+		body:     buf
+		body_str: ''
 		status:   code
 		headers:  {
 			'Content-Type': 'text/html; charset=UTF-8'
@@ -101,11 +112,11 @@ pub fn (c Context) get[T](key string) ?T {
 }
 
 // エラーレスポンス（Hikari風）
-pub fn (c Context) not_found() Response {
+pub fn (mut c Context) not_found() Response {
 	return c.text('Not Found', 404)
 }
 
-pub fn (c Context) redirect(location string, status ...int) Response {
+pub fn (mut c Context) redirect(location string, status ...int) Response {
 	code := if status.len > 0 { status[0] } else { 302 }
 	return Response{
 		body:     ''.bytes()
