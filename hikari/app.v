@@ -3,10 +3,6 @@ module hikari
 import veb
 import os
 
-// NOTE: we rely on Linux PR_SET_PDEATHSIG in the child for automatic
-// child termination when the parent dies. Parent-side signal handlers
-// can be added later for macOS/Windows if needed.
-
 $if !windows {
 	// POSIX interop
 	#include <signal.h>
