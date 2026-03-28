@@ -124,7 +124,23 @@ app.set_error_handler(fn (err IError, mut ctx hikari.Context) !hikari.Response {
 })
 ```
 
+### 6. 標準ミドルウェア (Standard Middlewares)
+
+Hikariは、組み込みで `Logger`, `CORS`, `Recover` の標準ミドルウェアを提供しています。詳細は [docs/standard_middlewares.md](docs/standard_middlewares.md) を参照してください。
+
+```v
+// ロガー
+app.use(hikari.logger())
+
+// CORS
+app.use(hikari.cors(hikari.CorsOptions{
+    allow_origins: ['*']
+}))
+
+// リカバリー
+app.use(hikari.recover())
+```
+
 ## 今後の展望
 
 - ファイルアップロード・静的ファイルの配信サポート
-- ミドルウェアの標準バンドル (CORS, Logger, Recover)

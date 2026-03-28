@@ -91,13 +91,8 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 		mut root := app.routes[method] or { return ctx.not_found() }
 		if node, route_mws := root.find_route(path, mut ctx) {
 			if handler := node.handler {
-				mut all_mws := []Middleware{}
-				for mw in app.middlewares {
-					all_mws << mw
-				}
-				for mw in route_mws {
-					all_mws << mw
-				}
+				mut all_mws := app.middlewares.clone()
+				all_mws << route_mws
 
 				mut chain := &MiddlewareChain{
 					middlewares: all_mws
@@ -114,6 +109,28 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 				return resp
 			}
 		}
+	} else if method == 'OPTIONS' {
+		// Run global middlewares for OPTIONS if no specific route is found, primarily for CORS
+		mut all_mws := app.middlewares.clone()
+
+		// Fallback handler for OPTIONS
+		handler := fn (mut ctx Context) !Response {
+			return ctx.text('Method Not Allowed')
+		}
+
+		mut chain := &MiddlewareChain{
+			middlewares: all_mws
+			handler:     handler
+			index:       0
+		}
+
+		resp := chain.next(mut ctx) or {
+			if err_handler := app.error_handler {
+				return err_handler(err, mut ctx)
+			}
+			return err
+		}
+		return resp
 	}
 	return ctx.not_found()
 }
