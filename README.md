@@ -72,8 +72,59 @@ v -prod main.v
 ./main
 ```
 
+### 3. POSTリクエストとJSONのパース
+
+```v
+struct User {
+    name string
+    age  int
+}
+
+app.post('/api/user', fn (mut c hikari.Context) !hikari.Response {
+    // リクエストのJSONボディを構造体にマッピング
+    user := c.bind_json[User]() or { return error('invalid json') }
+    return c.json({
+        'message': 'User created'
+        'user':    user.name
+    })
+})
+```
+
+### 4. ミドルウェア (Middlewares)
+
+グローバルミドルウェアやルートレベルのミドルウェアを使用できます。
+
+```v
+fn logger_mw(mut ctx hikari.Context, next hikari.Next) !hikari.Response {
+    println('Request: ${ctx.req.method} ${ctx.req.path}')
+
+    // カスタムヘッダーを追加
+    ctx.headers['X-Custom'] = 'Hikari'
+
+    // 次のミドルウェア（またはハンドラ）を実行
+    return next(mut ctx)
+}
+
+// グローバルミドルウェアとして追加
+app.use(logger_mw)
+
+// ルート個別にミドルウェアを追加することも可能
+app.get('/admin', fn (mut c hikari.Context) !hikari.Response {
+    return c.text('Admin Area')
+}, auth_mw)
+```
+
+### 5. グローバルなエラーハンドリング (Error Handling)
+
+```v
+app.set_error_handler(fn (err IError, mut ctx hikari.Context) !hikari.Response {
+    println('Error intercepted: ${err.msg()}')
+    ctx.headers['Content-Type'] = 'application/json'
+    return ctx.json({ 'error': err.msg() })
+})
+```
+
 ## 今後の展望
 
-- ミドルウェアの高度なサポート（CORS, Loggerなど）
-- グローバルなエラーハンドリング機構
 - ファイルアップロード・静的ファイルの配信サポート
+- ミドルウェアの標準バンドル (CORS, Logger, Recover)
