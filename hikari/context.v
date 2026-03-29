@@ -7,15 +7,18 @@ import json
 
 pub struct Context {
 pub mut:
-	req            picohttpparser.Request
-	res            picohttpparser.Response
-	params         map[string]string
-	query          map[string]string
-	headers        map[string]string
-	form           map[string]string
-	uploaded_files map[string][]http.FileData
-	parsed_form    bool
-	store          map[string]string
+	req                picohttpparser.Request
+	res                picohttpparser.Response
+	params             map[string]string
+	query              map[string]string
+	headers            map[string]string
+	form               map[string]string
+	uploaded_files     map[string][]http.FileData
+	parsed_form        bool
+	store              map[string]string
+	set_cookies        []string
+	req_header_cache   map[string]string
+	header_cache_built bool
 }
 
 // リクエストスコープのキー/バリューストアに値をセット
@@ -38,13 +41,16 @@ pub fn (mut c Context) header(key string) string {
 		return val
 	}
 
-	key_lower := key.to_lower()
-	for i in 0 .. c.req.num_headers {
-		if string(c.req.headers[i].name).to_lower() == key_lower {
-			return string(c.req.headers[i].value)
+	// Build lowercase header cache on first access
+	if !c.header_cache_built {
+		for i in 0 .. c.req.num_headers {
+			k := string(c.req.headers[i].name).to_lower()
+			v := string(c.req.headers[i].value)
+			c.req_header_cache[k] = v
 		}
+		c.header_cache_built = true
 	}
-	return ''
+	return c.req_header_cache[key.to_lower()] or { '' }
 }
 
 pub fn (c Context) body() string {
@@ -100,9 +106,10 @@ pub fn (mut c Context) files(key string) []http.FileData {
 // DX features: returning responses
 pub fn (mut c Context) text(body string) !Response {
 	mut res := Response{
-		status:  200
-		body:    body
-		headers: c.headers.clone()
+		status:      200
+		body:        body
+		headers:     c.headers.clone()
+		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
 	return res
@@ -110,9 +117,10 @@ pub fn (mut c Context) text(body string) !Response {
 
 pub fn (mut c Context) html(body string) !Response {
 	mut res := Response{
-		status:  200
-		body:    body
-		headers: c.headers.clone()
+		status:      200
+		body:        body
+		headers:     c.headers.clone()
+		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Content-Type'] = 'text/html; charset=utf-8'
 	return res
@@ -121,9 +129,10 @@ pub fn (mut c Context) html(body string) !Response {
 pub fn (mut c Context) json[T](val T) !Response {
 	encoded := json.encode(val)
 	mut res := Response{
-		status:  200
-		body:    encoded
-		headers: c.headers.clone()
+		status:      200
+		body:        encoded
+		headers:     c.headers.clone()
+		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Content-Type'] = 'application/json; charset=utf-8'
 	return res
@@ -131,9 +140,10 @@ pub fn (mut c Context) json[T](val T) !Response {
 
 pub fn (mut c Context) not_found() !Response {
 	mut res := Response{
-		status:  404
-		body:    '404 Not Found'
-		headers: c.headers.clone()
+		status:      404
+		body:        '404 Not Found'
+		headers:     c.headers.clone()
+		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
 	return res
@@ -142,9 +152,10 @@ pub fn (mut c Context) not_found() !Response {
 // 任意のHTTPステータスコードでレスポンスを返す
 pub fn (mut c Context) send_status(status int, body string) !Response {
 	mut res := Response{
-		status:  status
-		body:    body
-		headers: c.headers.clone()
+		status:      status
+		body:        body
+		headers:     c.headers.clone()
+		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
 	return res
@@ -154,9 +165,10 @@ pub fn (mut c Context) send_status(status int, body string) !Response {
 // status には 301, 302, 303, 307, 308 などを指定する
 pub fn (mut c Context) redirect(url string, status int) !Response {
 	mut res := Response{
-		status:  status
-		body:    ''
-		headers: c.headers.clone()
+		status:      status
+		body:        ''
+		headers:     c.headers.clone()
+		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Location'] = url
 	return res
@@ -165,17 +177,103 @@ pub fn (mut c Context) redirect(url string, status int) !Response {
 // HTTP response configuration uses standard V types
 
 pub fn (mut c Context) parse_query() {
-	if c.req.path.contains('?') {
-		parts := c.req.path.split('?')
-		if parts.len > 1 {
-			query_string := parts[1]
-			values := urllib.parse_query(query_string) or { return }
-			for k, v in values.to_map() {
-				if v.len > 0 {
-					c.query[k] = v[0]
-				}
-			}
+	path := c.req.path
+	q_idx := path.index_u8(`?`)
+	if q_idx < 0 {
+		return
+	}
+	query_string := path[q_idx + 1..]
+	values := urllib.parse_query(query_string) or { return }
+	for k, v in values.to_map() {
+		if v.len > 0 {
+			c.query[k] = v[0]
 		}
 	}
 }
 
+// クエリパラメータを取得する便利メソッド（存在しない場合は空文字列）
+pub fn (mut c Context) query_value(key string) string {
+	return c.query[key] or { '' }
+}
+
+// リクエストの Cookie 値を取得する
+pub fn (mut c Context) cookie(name string) string {
+	cookie_header := c.header('Cookie')
+	if cookie_header == '' {
+		return ''
+	}
+	for part in cookie_header.split(';') {
+		trimmed := part.trim(' ')
+		eq_idx := trimmed.index_u8(`=`)
+		if eq_idx < 0 {
+			continue
+		}
+		k := trimmed[..eq_idx].trim(' ')
+		if k == name {
+			return trimmed[eq_idx + 1..]
+		}
+	}
+	return ''
+}
+
+// リクエストの全 Cookie を map として取得する
+pub fn (mut c Context) cookies() map[string]string {
+	mut result := map[string]string{}
+	cookie_header := c.header('Cookie')
+	if cookie_header == '' {
+		return result
+	}
+	for part in cookie_header.split(';') {
+		trimmed := part.trim(' ')
+		eq_idx := trimmed.index_u8(`=`)
+		if eq_idx < 0 {
+			continue
+		}
+		k := trimmed[..eq_idx].trim(' ')
+		v := trimmed[eq_idx + 1..]
+		result[k] = v
+	}
+	return result
+}
+
+// Cookie の設定オプション
+pub struct CookieOptions {
+pub:
+	// Max-Age（秒単位）。0の場合は省略される
+	max_age int
+	// Cookie の有効パス（デフォルト: '/'）
+	path string = '/'
+	// Cookie の有効ドメイン（空文字列で省略）
+	domain string
+	// HTTPS のみ送信するか（デフォルト: false）
+	secure bool
+	// JavaScript からアクセス不可にするか（デフォルト: true）
+	http_only bool = true
+	// SameSite 属性（'Strict', 'Lax', 'None'、デフォルト: 'Lax'）
+	same_site string = 'Lax'
+}
+
+// レスポンスに Set-Cookie ヘッダーを追加する
+// 複数回呼び出すと複数のクッキーを設定できる
+pub fn (mut c Context) set_cookie(name string, value string, options CookieOptions) {
+	mut cookie := '${name}=${value}'
+	if options.path != '' {
+		cookie += '; Path=${options.path}'
+	}
+	if options.domain != '' {
+		cookie += '; Domain=${options.domain}'
+	}
+	if options.max_age != 0 {
+		cookie += '; Max-Age=${options.max_age}'
+	}
+	if options.secure {
+		cookie += '; Secure'
+	}
+	if options.http_only {
+		cookie += '; HttpOnly'
+	}
+	if options.same_site != '' {
+		cookie += '; SameSite=${options.same_site}'
+	}
+	c.set_cookies << cookie
+}

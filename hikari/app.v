@@ -284,6 +284,12 @@ fn pico_cb(void_ptr_app voidptr, req picohttpparser.Request, mut res picohttppar
 			for k, v in resp.headers {
 				res.header(k, v)
 			}
+			// Set-Cookie ヘッダーを複数書き出す
+			for cookie in resp.set_cookies {
+				res.header('Set-Cookie', cookie)
+			}
+			// Content-Length を自動付与（HTTP/1.1 の keep-alive に必要）
+			res.header('Content-Length', resp.body.len.str())
 			res.body(resp.body)
 			_ = res.end()
 		} else {
