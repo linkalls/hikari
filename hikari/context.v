@@ -2,15 +2,19 @@ module hikari
 
 import picohttpparser
 import net.urllib
+import net.http
 import json
 
 pub struct Context {
 pub mut:
-	req     picohttpparser.Request
-	res     picohttpparser.Response
-	params  map[string]string
-	query   map[string]string
-	headers map[string]string
+	req            picohttpparser.Request
+	res            picohttpparser.Response
+	params         map[string]string
+	query          map[string]string
+	headers        map[string]string
+	form           map[string]string
+	uploaded_files map[string][]http.FileData
+	parsed_form    bool
 }
 
 pub fn (mut c Context) param(key string) string {
@@ -18,6 +22,11 @@ pub fn (mut c Context) param(key string) string {
 }
 
 pub fn (mut c Context) header(key string) string {
+	// First check the context headers map (e.g. set by tests or middlewares)
+	if val := c.headers[key] {
+		return val
+	}
+
 	key_lower := key.to_lower()
 	for i in 0 .. c.req.num_headers {
 		if string(c.req.headers[i].name).to_lower() == key_lower {
@@ -33,6 +42,41 @@ pub fn (c Context) body() string {
 
 pub fn (c Context) bind_json[T]() !T {
 	return json.decode(T, c.body())
+}
+
+pub fn (mut c Context) parse_form() {
+	if c.parsed_form {
+		return
+	}
+	content_type := c.header('Content-Type')
+	if content_type.starts_with('multipart/form-data') {
+		boundary_idx := content_type.index('boundary=') or { return }
+		boundary := content_type[boundary_idx + 9..]
+		form_vals, files := http.parse_multipart_form(c.body(), boundary)
+		c.form = form_vals.clone()
+		c.uploaded_files = files.clone()
+	}
+	c.parsed_form = true
+}
+
+pub fn (mut c Context) form_value(key string) string {
+	c.parse_form()
+	return c.form[key] or { '' }
+}
+
+pub fn (mut c Context) file(key string) ?http.FileData {
+	c.parse_form()
+	if files := c.uploaded_files[key] {
+		if files.len > 0 {
+			return files[0]
+		}
+	}
+	return none
+}
+
+pub fn (mut c Context) files(key string) []http.FileData {
+	c.parse_form()
+	return c.uploaded_files[key] or { []http.FileData{} }
 }
 
 // DX features: returning responses

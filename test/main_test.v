@@ -124,3 +124,43 @@ fn test_error_handler() {
 	assert res.status == 200
 	assert res.body == 'Custom Error: Something went wrong'
 }
+
+fn test_file_upload() {
+	mut app := hikari.new()
+	app.post('/upload', fn (mut ctx hikari.Context) !hikari.Response {
+		username := ctx.form_value('username')
+		assert username == 'testuser'
+
+		file := ctx.file('avatar') or { return ctx.text('no file') }
+		assert file.filename == 'avatar.png'
+		assert file.content_type == 'image/png'
+		assert file.data == 'fake-png-data'
+
+		return ctx.text('uploaded')
+	})
+
+	boundary := '----WebKitFormBoundary7MA4YWxkTrZu0gW'
+	body := '--${boundary}\r\n' +
+		'Content-Disposition: form-data; name="username"\r\n\r\n' +
+		'testuser\r\n' +
+		'--${boundary}\r\n' +
+		'Content-Disposition: form-data; name="avatar"; filename="avatar.png"\r\n' +
+		'Content-Type: image/png\r\n\r\n' +
+		'fake-png-data\r\n' +
+		'--${boundary}--\r\n'
+
+	mut ctx := hikari.Context{
+		req:    picohttpparser.Request{
+			method: 'POST'
+			path:   '/upload'
+			body:   body
+		}
+		params: map[string]string{}
+		headers: map[string]string{}
+	}
+	// For testing, mock context headers directly as Hikari context wrapper parses from it
+	ctx.headers['Content-Type'] = 'multipart/form-data; boundary=' + boundary
+	res := app.handle_request(mut ctx) or { panic(err) }
+	assert res.status == 200
+	assert res.body == 'uploaded'
+}
