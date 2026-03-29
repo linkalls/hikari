@@ -27,46 +27,54 @@ pub fn (mut c Context) header(key string) string {
 	return ''
 }
 
+pub fn (c Context) body() string {
+	return c.req.body
+}
+
+pub fn (c Context) bind_json[T]() !T {
+	return json.decode(T, c.body())
+}
+
 // DX features: returning responses
 pub fn (mut c Context) text(body string) !Response {
-	return Response{
+	mut res := Response{
 		status:  200
 		body:    body
-		headers: {
-			'Content-Type': 'text/plain; charset=utf-8'
-		}
+		headers: c.headers.clone()
 	}
+	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
+	return res
 }
 
 pub fn (mut c Context) html(body string) !Response {
-	return Response{
+	mut res := Response{
 		status:  200
 		body:    body
-		headers: {
-			'Content-Type': 'text/html; charset=utf-8'
-		}
+		headers: c.headers.clone()
 	}
+	res.headers['Content-Type'] = 'text/html; charset=utf-8'
+	return res
 }
 
 pub fn (mut c Context) json[T](val T) !Response {
 	encoded := json.encode(val)
-	return Response{
+	mut res := Response{
 		status:  200
 		body:    encoded
-		headers: {
-			'Content-Type': 'application/json; charset=utf-8'
-		}
+		headers: c.headers.clone()
 	}
+	res.headers['Content-Type'] = 'application/json; charset=utf-8'
+	return res
 }
 
 pub fn (mut c Context) not_found() !Response {
-	return Response{
+	mut res := Response{
 		status:  404
 		body:    '404 Not Found'
-		headers: {
-			'Content-Type': 'text/plain; charset=utf-8'
-		}
+		headers: c.headers.clone()
 	}
+	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
+	return res
 }
 
 // HTTP response configuration uses standard V types

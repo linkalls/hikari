@@ -6,19 +6,45 @@ import picohttpparser
 @[heap]
 pub struct Hikari {
 pub mut:
-	routes      map[string]&TrieNode
-	middlewares []Middleware
+	routes        map[string]&TrieNode
+	middlewares   []Middleware
+	error_handler ?ErrorHandler
 }
 
 pub fn new() &Hikari {
 	return &Hikari{
-		routes:      map[string]&TrieNode{}
-		middlewares: []Middleware{}
+		routes:        map[string]&TrieNode{}
+		middlewares:   []Middleware{}
+		error_handler: none
 	}
 }
 
 pub fn (mut app Hikari) use(middleware Middleware) {
 	app.middlewares << middleware
+}
+
+pub fn (mut app Hikari) set_error_handler(handler ErrorHandler) {
+	app.error_handler = handler
+}
+
+// Middleware execution chain
+@[heap]
+struct MiddlewareChain {
+mut:
+	middlewares []Middleware
+	handler     Handler = unsafe { nil }
+	index       int
+}
+
+fn (mut chain MiddlewareChain) next(mut ctx Context) !Response {
+	if chain.index < chain.middlewares.len {
+		mw := chain.middlewares[chain.index]
+		chain.index++
+		return mw(mut ctx, fn [mut chain] (mut c Context) !Response {
+			return chain.next(mut c)
+		})
+	}
+	return chain.handler(mut ctx)
 }
 
 fn (mut app Hikari) add_route(method string, path string, handler Handler, middlewares ...Middleware) {
@@ -51,6 +77,20 @@ pub fn (mut app Hikari) patch(path string, handler Handler, middlewares ...Middl
 	app.add_route('PATCH', path, handler, ...middlewares)
 }
 
+pub fn (mut app Hikari) static(path string, root_dir string) {
+	// e.g. path = "/public", root_dir = "./public"
+	// We need to match /public, /public/, and /public/*
+	handler := static_handler(path, root_dir)
+	mut route_path := path
+	if route_path.ends_with('/') {
+		route_path = route_path[0..route_path.len - 1]
+	}
+
+	app.get(route_path, handler)
+	app.get(route_path + '/', handler)
+	app.get(route_path + '/:path...', handler)
+}
+
 // Request processing pipeline.
 // Can be called directly for testing.
 pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
@@ -63,11 +103,48 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 	// Route mapping
 	if method in app.routes {
 		mut root := app.routes[method] or { return ctx.not_found() }
-		if node, _ := root.find_route(path, mut ctx) {
+		if node, route_mws := root.find_route(path, mut ctx) {
 			if handler := node.handler {
-				return handler(mut ctx)
+				mut all_mws := app.middlewares.clone()
+				all_mws << route_mws
+
+				mut chain := &MiddlewareChain{
+					middlewares: all_mws
+					handler:     handler
+					index:       0
+				}
+
+				resp := chain.next(mut ctx) or {
+					if err_handler := app.error_handler {
+						return err_handler(err, mut ctx)
+					}
+					return err
+				}
+				return resp
 			}
 		}
+	} else if method == 'OPTIONS' {
+		// Run global middlewares for OPTIONS if no specific route is found, primarily for CORS
+		mut all_mws := app.middlewares.clone()
+
+		// Fallback handler for OPTIONS
+		handler := fn (mut ctx Context) !Response {
+			return ctx.text('Method Not Allowed')
+		}
+
+		mut chain := &MiddlewareChain{
+			middlewares: all_mws
+			handler:     handler
+			index:       0
+		}
+
+		resp := chain.next(mut ctx) or {
+			if err_handler := app.error_handler {
+				return err_handler(err, mut ctx)
+			}
+			return err
+		}
+		return resp
 	}
 	return ctx.not_found()
 }

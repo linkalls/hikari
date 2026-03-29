@@ -4,7 +4,9 @@ pub type Handler = fn (mut Context) !Response
 
 pub type Middleware = fn (mut Context, Next) !Response
 
-pub type Next = fn () !Response
+pub type Next = fn (mut Context) !Response
+
+pub type ErrorHandler = fn (err IError, mut ctx Context) !Response
 
 pub struct Response {
 pub mut:

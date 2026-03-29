@@ -72,8 +72,90 @@ v -prod main.v
 ./main
 ```
 
+### 3. POSTリクエストとJSONのパース
+
+```v
+struct User {
+    name string
+    age  int
+}
+
+app.post('/api/user', fn (mut c hikari.Context) !hikari.Response {
+    // リクエストのJSONボディを構造体にマッピング
+    user := c.bind_json[User]() or { return error('invalid json') }
+    return c.json({
+        'message': 'User created'
+        'user':    user.name
+    })
+})
+```
+
+### 4. ミドルウェア (Middlewares)
+
+グローバルミドルウェアやルートレベルのミドルウェアを使用できます。
+
+```v
+fn logger_mw(mut ctx hikari.Context, next hikari.Next) !hikari.Response {
+    println('Request: ${ctx.req.method} ${ctx.req.path}')
+
+    // カスタムヘッダーを追加
+    ctx.headers['X-Custom'] = 'Hikari'
+
+    // 次のミドルウェア（またはハンドラ）を実行
+    return next(mut ctx)
+}
+
+// グローバルミドルウェアとして追加
+app.use(logger_mw)
+
+// ルート個別にミドルウェアを追加することも可能
+app.get('/admin', fn (mut c hikari.Context) !hikari.Response {
+    return c.text('Admin Area')
+}, auth_mw)
+```
+
+### 5. グローバルなエラーハンドリング (Error Handling)
+
+```v
+app.set_error_handler(fn (err IError, mut ctx hikari.Context) !hikari.Response {
+    println('Error intercepted: ${err.msg()}')
+    ctx.headers['Content-Type'] = 'application/json'
+    return ctx.json({ 'error': err.msg() })
+})
+```
+
+### 6. 静的ファイルの配信 (Static File Serving)
+
+Hikariは、組み込みで静的ファイルの配信機能を提供しています。`app.static(path, root_dir)` メソッドを使用して、指定したディレクトリ内のファイルを簡単に配信できます。
+
+```v
+import hikari
+
+mut app := hikari.new()
+
+// '/public' プレフィックスで './public' ディレクトリ内のファイルにアクセスできるようにします
+app.static('/public', './public')
+```
+
+これによって、たとえば `./public/style.css` というファイルがある場合、クライアントは `/public/style.css` にアクセスしてファイルを取得できます。また、パスにファイル名が指定されていない場合（例: `/public/`）、自動的に `index.html` が検索されます。
+
+### 7. 標準ミドルウェア (Standard Middlewares)
+
+Hikariは、組み込みで `Logger`, `CORS`, `Recover` の標準ミドルウェアを提供しています。詳細は [docs/standard_middlewares.md](docs/standard_middlewares.md) を参照してください。
+
+```v
+// ロガー
+app.use(hikari.logger())
+
+// CORS
+app.use(hikari.cors(hikari.CorsOptions{
+    allow_origins: ['*']
+}))
+
+// リカバリー
+app.use(hikari.recover())
+```
+
 ## 今後の展望
 
-- ミドルウェアの高度なサポート（CORS, Loggerなど）
-- グローバルなエラーハンドリング機構
-- ファイルアップロード・静的ファイルの配信サポート
+- ファイルアップロードのサポート
