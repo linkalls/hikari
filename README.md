@@ -39,7 +39,11 @@ Hikariの開発は、**「究極のパフォーマンス」と「最高のDevelo
 - ✅ **静的ファイル配信** — ETag, Cache-Control 対応
 - ✅ **HttpError 型** — HTTP ステータスコード付きエラー
 - ✅ **グローバルエラーハンドリング** — `app.set_error_handler()`
-- ✅ **標準ミドルウェア** — Logger, CORS, Recover, RateLimit, RequestID, Secure, ETag, BasicAuth, Compress
+- ✅ **標準ミドルウェア** — Logger, CORS, Recover, RateLimit, RequestID, Secure, ETag, BasicAuth, Compress, BodyLimit
+- ✅ **クッキーサポート** — `ctx.cookie()` / `ctx.cookies()` / `ctx.set_cookie()`
+- ✅ **クエリパラメータ** — `ctx.query_value(key)` 便利メソッド
+- ✅ **Content-Length 自動付与** — HTTP/1.1 Keep-Alive 効率最適化
+- ✅ **ヘッダーキャッシュ** — `ctx.header()` が初回アクセス時にキャッシュを構築し O(1) ルックアップ
 
 ---
 
@@ -243,7 +247,35 @@ app.use(hikari.basic_auth(hikari.BasicAuthOptions{
 }))
 ```
 
-### 11. リダイレクトとカスタムステータスコード
+### 11. クッキーサポート (Cookie Support)
+
+```v
+// ログイン時にセッションクッキーを設定
+app.post('/login', fn (mut c hikari.Context) !hikari.Response {
+    c.set_cookie('session', 'tok123', hikari.CookieOptions{
+        max_age:   3600
+        http_only: true
+        same_site: 'Strict'
+    })
+    // 複数のクッキーを設定することも可能
+    c.set_cookie('theme', 'dark', hikari.CookieOptions{
+        http_only: false
+    })
+    return c.redirect('/dashboard', 302)
+})
+
+// リクエストのクッキーを読み取る
+app.get('/me', fn (mut c hikari.Context) !hikari.Response {
+    session := c.cookie('session')  // 単一クッキーを取得
+    if session == '' {
+        return hikari.http_error(401, 'Unauthorized')
+    }
+    all_cookies := c.cookies()  // 全クッキーを map で取得
+    return c.text('Hello! theme=${all_cookies['theme']}')
+})
+```
+
+### 12. リダイレクトとカスタムステータスコード
 
 ```v
 // リダイレクト
@@ -262,7 +294,7 @@ app.get('/protected', fn (mut c hikari.Context) !hikari.Response {
 })
 ```
 
-### 12. コンテキストストア
+### 13. コンテキストストアとクエリパラメータ
 
 ミドルウェアとハンドラの間でデータを受け渡すことができます。
 
@@ -278,6 +310,13 @@ app.get('/profile', fn (mut ctx hikari.Context) !hikari.Response {
     user_id := ctx.get('user_id')
     return ctx.text('User ID: ${user_id}')
 }, auth_mw)
+
+// クエリパラメータの取得（?q=hello&page=2）
+app.get('/search', fn (mut c hikari.Context) !hikari.Response {
+    q    := c.query_value('q')    // "hello"
+    page := c.query_value('page') // "2"
+    return c.text('q=${q}, page=${page}')
+})
 ```
 
 ## 今後の展望

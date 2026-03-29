@@ -10,9 +10,10 @@ pub type ErrorHandler = fn (err IError, mut ctx Context) !Response
 
 pub struct Response {
 pub mut:
-	status  int
-	body    string
-	headers map[string]string
+	status      int
+	body        string
+	headers     map[string]string
+	set_cookies []string
 }
 
 pub fn (res Response) text() string {
