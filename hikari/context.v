@@ -15,6 +15,17 @@ pub mut:
 	form           map[string]string
 	uploaded_files map[string][]http.FileData
 	parsed_form    bool
+	store          map[string]string
+}
+
+// リクエストスコープのキー/バリューストアに値をセット
+pub fn (mut c Context) set(key string, val string) {
+	c.store[key] = val
+}
+
+// リクエストスコープのキー/バリューストアから値を取得
+pub fn (mut c Context) get(key string) string {
+	return c.store[key] or { '' }
 }
 
 pub fn (mut c Context) param(key string) string {
@@ -55,6 +66,13 @@ pub fn (mut c Context) parse_form() {
 		form_vals, files := http.parse_multipart_form(c.body(), boundary)
 		c.form = form_vals.clone()
 		c.uploaded_files = files.clone()
+	} else if content_type.starts_with('application/x-www-form-urlencoded') {
+		values := urllib.parse_query(c.body()) or { return }
+		for k, v in values.to_map() {
+			if v.len > 0 {
+				c.form[k] = v[0]
+			}
+		}
 	}
 	c.parsed_form = true
 }
@@ -121,6 +139,29 @@ pub fn (mut c Context) not_found() !Response {
 	return res
 }
 
+// 任意のHTTPステータスコードでレスポンスを返す
+pub fn (mut c Context) send_status(status int, body string) !Response {
+	mut res := Response{
+		status:  status
+		body:    body
+		headers: c.headers.clone()
+	}
+	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
+	return res
+}
+
+// HTTPリダイレクトレスポンスを返す
+// status には 301, 302, 303, 307, 308 などを指定する
+pub fn (mut c Context) redirect(url string, status int) !Response {
+	mut res := Response{
+		status:  status
+		body:    ''
+		headers: c.headers.clone()
+	}
+	res.headers['Location'] = url
+	return res
+}
+
 // HTTP response configuration uses standard V types
 
 pub fn (mut c Context) parse_query() {
@@ -137,3 +178,4 @@ pub fn (mut c Context) parse_query() {
 		}
 	}
 }
+

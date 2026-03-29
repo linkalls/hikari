@@ -2,9 +2,24 @@ module hikari
 
 import os
 import net.http.mime
+import crypto.md5
+import encoding.hex
+
+// キャッシュ設定の構造体
+pub struct StaticOptions {
+pub:
+	// Cache-Control の max-age（秒単位、デフォルト: 86400 = 1日）
+	max_age int = 86400
+	// ETag を付与するか（デフォルト: true）
+	etag bool = true
+}
 
 pub fn static_handler(prefix string, root_dir string) Handler {
-	return fn [prefix, root_dir] (mut ctx Context) !Response {
+	return static_handler_with_options(prefix, root_dir, StaticOptions{})
+}
+
+pub fn static_handler_with_options(prefix string, root_dir string, options StaticOptions) Handler {
+	return fn [prefix, root_dir, options] (mut ctx Context) !Response {
 		mut path := ctx.req.path
 
 		if path.starts_with(prefix) {
@@ -46,6 +61,43 @@ pub fn static_handler(prefix string, root_dir string) Handler {
 			}
 		}
 
+		// ETag の計算
+		if options.etag {
+			hash := md5.sum(content.bytes())
+			etag_val := '"${hex.encode(hash)}"'
+
+			// If-None-Match チェック
+			if_none_match := ctx.header('If-None-Match')
+			if if_none_match == etag_val {
+				mut not_modified := Response{
+					status:  304
+					body:    ''
+					headers: ctx.headers.clone()
+				}
+				not_modified.headers['ETag'] = etag_val
+				return not_modified
+			}
+
+			mut res := Response{
+				status:  200
+				body:    content
+				headers: ctx.headers.clone()
+			}
+
+			if mime_type != '' {
+				res.headers['Content-Type'] = mime_type
+			} else {
+				res.headers['Content-Type'] = 'application/octet-stream'
+			}
+
+			res.headers['ETag'] = etag_val
+			if options.max_age > 0 {
+				res.headers['Cache-Control'] = 'public, max-age=${options.max_age}'
+			}
+
+			return res
+		}
+
 		mut res := Response{
 			status:  200
 			body:    content
@@ -56,6 +108,10 @@ pub fn static_handler(prefix string, root_dir string) Handler {
 			res.headers['Content-Type'] = mime_type
 		} else {
 			res.headers['Content-Type'] = 'application/octet-stream'
+		}
+
+		if options.max_age > 0 {
+			res.headers['Cache-Control'] = 'public, max-age=${options.max_age}'
 		}
 
 		return res
