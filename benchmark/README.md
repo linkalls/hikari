@@ -20,18 +20,22 @@
    ```
    ※ `$GOPATH/bin` にパスを通してください。
 
-2. **ベンチマークアプリのビルドと起動**
+2. **自動ベンチマークの実行**
+
+   リポジトリに含まれる `run.sh` スクリプトを使用して、Hikari、Go Fiber、Hono (Bun) の3つのフレームワークに対するベンチマークテストを自動的にコンパイル・実行・比較できます。
 
    ```bash
-   v -prod benchmark/main.v
-   ./benchmark/main &
+   cd benchmark
+   ./run.sh
    ```
 
-3. **負荷テストの実行**
+3. **個別の負荷テストの実行**
 
-   100コネクションで100,000リクエストを送信する例です：
+   Hikariの単体テストを行う場合は、以下のようにビルドして `bombardier` を実行します。
 
    ```bash
+   v -prod main.v
+   ./main &
    bombardier -c 100 -n 100000 http://localhost:3000/
    ```
 
