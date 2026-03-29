@@ -124,7 +124,22 @@ app.set_error_handler(fn (err IError, mut ctx hikari.Context) !hikari.Response {
 })
 ```
 
-### 6. 標準ミドルウェア (Standard Middlewares)
+### 6. 静的ファイルの配信 (Static File Serving)
+
+Hikariは、組み込みで静的ファイルの配信機能を提供しています。`app.static(path, root_dir)` メソッドを使用して、指定したディレクトリ内のファイルを簡単に配信できます。
+
+```v
+import hikari
+
+mut app := hikari.new()
+
+// '/public' プレフィックスで './public' ディレクトリ内のファイルにアクセスできるようにします
+app.static('/public', './public')
+```
+
+これによって、たとえば `./public/style.css` というファイルがある場合、クライアントは `/public/style.css` にアクセスしてファイルを取得できます。また、パスにファイル名が指定されていない場合（例: `/public/`）、自動的に `index.html` が検索されます。
+
+### 7. 標準ミドルウェア (Standard Middlewares)
 
 Hikariは、組み込みで `Logger`, `CORS`, `Recover` の標準ミドルウェアを提供しています。詳細は [docs/standard_middlewares.md](docs/standard_middlewares.md) を参照してください。
 
@@ -143,4 +158,4 @@ app.use(hikari.recover())
 
 ## 今後の展望
 
-- ファイルアップロード・静的ファイルの配信サポート
+- ファイルアップロードのサポート
