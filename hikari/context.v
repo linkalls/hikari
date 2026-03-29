@@ -109,7 +109,7 @@ pub fn (mut c Context) text(body string) !Response {
 		status:      200
 		body:        body
 		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
-		set_cookies: c.set_cookies.clone()
+		set_cookies: if c.set_cookies.len > 0 { c.set_cookies.clone() } else { []string{} }
 	}
 	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
 	return res
@@ -120,7 +120,7 @@ pub fn (mut c Context) html(body string) !Response {
 		status:      200
 		body:        body
 		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
-		set_cookies: c.set_cookies.clone()
+		set_cookies: if c.set_cookies.len > 0 { c.set_cookies.clone() } else { []string{} }
 	}
 	res.headers['Content-Type'] = 'text/html; charset=utf-8'
 	return res
@@ -132,7 +132,20 @@ pub fn (mut c Context) json[T](val T) !Response {
 		status:      200
 		body:        encoded
 		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
-		set_cookies: c.set_cookies.clone()
+		set_cookies: if c.set_cookies.len > 0 { c.set_cookies.clone() } else { []string{} }
+	}
+	res.headers['Content-Type'] = 'application/json; charset=utf-8'
+	return res
+}
+
+// 事前エンコード済みの JSON 文字列をそのままレスポンスとして返す
+// json.encode() の呼び出しを避け、静的・頻繁に呼ばれるエンドポイントの高速化に使う
+pub fn (mut c Context) json_raw(body string) !Response {
+	mut res := Response{
+		status:      200
+		body:        body
+		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
+		set_cookies: if c.set_cookies.len > 0 { c.set_cookies.clone() } else { []string{} }
 	}
 	res.headers['Content-Type'] = 'application/json; charset=utf-8'
 	return res
@@ -143,7 +156,7 @@ pub fn (mut c Context) not_found() !Response {
 		status:      404
 		body:        '404 Not Found'
 		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
-		set_cookies: c.set_cookies.clone()
+		set_cookies: if c.set_cookies.len > 0 { c.set_cookies.clone() } else { []string{} }
 	}
 	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
 	return res
@@ -156,7 +169,7 @@ pub fn (mut c Context) json_status[T](status int, val T) !Response {
 		status:      status
 		body:        encoded
 		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
-		set_cookies: c.set_cookies.clone()
+		set_cookies: if c.set_cookies.len > 0 { c.set_cookies.clone() } else { []string{} }
 	}
 	res.headers['Content-Type'] = 'application/json; charset=utf-8'
 	return res
@@ -168,9 +181,22 @@ pub fn (mut c Context) html_status(status int, body string) !Response {
 		status:      status
 		body:        body
 		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
-		set_cookies: c.set_cookies.clone()
+		set_cookies: if c.set_cookies.len > 0 { c.set_cookies.clone() } else { []string{} }
 	}
 	res.headers['Content-Type'] = 'text/html; charset=utf-8'
+	return res
+}
+
+// 任意のHTTPステータスコードで text/plain レスポンスを返す
+// send_status のエイリアスだが html_status/json_status と名前を揃えた版
+pub fn (mut c Context) text_status(status int, body string) !Response {
+	mut res := Response{
+		status:      status
+		body:        body
+		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
+		set_cookies: if c.set_cookies.len > 0 { c.set_cookies.clone() } else { []string{} }
+	}
+	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
 	return res
 }
 
@@ -180,7 +206,7 @@ pub fn (mut c Context) send_status(status int, body string) !Response {
 		status:      status
 		body:        body
 		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
-		set_cookies: c.set_cookies.clone()
+		set_cookies: if c.set_cookies.len > 0 { c.set_cookies.clone() } else { []string{} }
 	}
 	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
 	return res
@@ -193,7 +219,7 @@ pub fn (mut c Context) redirect(url string, status int) !Response {
 		status:      status
 		body:        ''
 		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
-		set_cookies: c.set_cookies.clone()
+		set_cookies: if c.set_cookies.len > 0 { c.set_cookies.clone() } else { []string{} }
 	}
 	res.headers['Location'] = url
 	return res

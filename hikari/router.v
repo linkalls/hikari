@@ -79,7 +79,7 @@ pub fn (mut node TrieNode) add_route(path string, handler Handler, middlewares [
 // Uses string slices (`path[start..end]`) to avoid memory allocations.
 pub fn (node &TrieNode) find_route(path string, mut ctx Context) ?(&TrieNode, []Middleware) {
 	mut curr := unsafe { node }
-	mut middlewares := []Middleware{}
+	mut middlewares := []Middleware{cap: 4}
 
 	// Fast path for root
 	if path == '/' || path == '' {

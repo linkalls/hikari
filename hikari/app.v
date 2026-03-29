@@ -55,6 +55,26 @@ pub fn (mut g RouteGroup) patch(path string, handler Handler, middlewares ...Mid
 	g.app.add_route('PATCH', g.prefix + path, handler, ...all_mws)
 }
 
+pub fn (mut g RouteGroup) head(path string, handler Handler, middlewares ...Middleware) {
+	mut all_mws := g.middlewares.clone()
+	all_mws << middlewares
+	g.app.add_route('HEAD', g.prefix + path, handler, ...all_mws)
+}
+
+pub fn (mut g RouteGroup) options(path string, handler Handler, middlewares ...Middleware) {
+	mut all_mws := g.middlewares.clone()
+	all_mws << middlewares
+	g.app.add_route('OPTIONS', g.prefix + path, handler, ...all_mws)
+}
+
+pub fn (mut g RouteGroup) any(path string, handler Handler, middlewares ...Middleware) {
+	for method in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'] {
+		mut all_mws := g.middlewares.clone()
+		all_mws << middlewares
+		g.app.add_route(method, g.prefix + path, handler, ...all_mws)
+	}
+}
+
 pub fn new() &Hikari {
 	return &Hikari{
 		routes:            map[string]&TrieNode{}
@@ -133,6 +153,14 @@ pub fn (mut app Hikari) head(path string, handler Handler, middlewares ...Middle
 
 pub fn (mut app Hikari) options(path string, handler Handler, middlewares ...Middleware) {
 	app.add_route('OPTIONS', path, handler, ...middlewares)
+}
+
+// 全 HTTP メソッドに同一ハンドラを登録する
+// GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS すべてにルートを追加する
+pub fn (mut app Hikari) any(path string, handler Handler, middlewares ...Middleware) {
+	for method in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'] {
+		app.add_route(method, path, handler, ...middlewares)
+	}
 }
 
 pub fn (mut app Hikari) static(path string, root_dir string) {
