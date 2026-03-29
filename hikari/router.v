@@ -84,7 +84,9 @@ pub fn (node &TrieNode) find_route(path string, mut ctx Context) ?(&TrieNode, []
 	// Fast path for root
 	if path == '/' || path == '' {
 		if curr.handler != none {
-			middlewares << curr.middlewares
+			if curr.middlewares.len > 0 {
+				middlewares << curr.middlewares
+			}
 			return curr, middlewares
 		}
 		return none
@@ -100,7 +102,9 @@ pub fn (node &TrieNode) find_route(path string, mut ctx Context) ?(&TrieNode, []
 		end := path.index_after('/', start) or { path.len }
 		seg := path[start..end]
 
-		middlewares << curr.middlewares
+		if curr.middlewares.len > 0 {
+			middlewares << curr.middlewares
+		}
 
 		if seg in curr.children {
 			curr = unsafe { curr.children[seg] or { return none } }
@@ -108,7 +112,9 @@ pub fn (node &TrieNode) find_route(path string, mut ctx Context) ?(&TrieNode, []
 			child := curr.children[':'] or { return none }
 			if child.param_greedy {
 				ctx.params[child.param_name] = path[start..]
-				middlewares << child.middlewares
+				if child.middlewares.len > 0 {
+					middlewares << child.middlewares
+				}
 				return child, middlewares
 			}
 			ctx.params[child.param_name] = seg
@@ -123,7 +129,9 @@ pub fn (node &TrieNode) find_route(path string, mut ctx Context) ?(&TrieNode, []
 		start = end + 1
 	}
 
-	middlewares << curr.middlewares
+	if curr.middlewares.len > 0 {
+		middlewares << curr.middlewares
+	}
 
 	if curr.handler != none {
 		return curr, middlewares

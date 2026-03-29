@@ -155,10 +155,19 @@ pub fn (mut app Hikari) group(prefix string, middlewares ...Middleware) &RouteGr
 // Request processing pipeline.
 // Can be called directly for testing.
 pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
-	method := ctx.req.method.to_upper()
+	// 標準的な HTTP メソッドは既に大文字なのでアロケーションを回避する
+	method := match ctx.req.method {
+		'GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'CONNECT', 'TRACE' {
+			ctx.req.method
+		}
+		else {
+			ctx.req.method.to_upper()
+		}
+	}
 	mut path := ctx.req.path
-	if path.contains('?') {
-		path = path.split('?')[0]
+	q_idx := path.index_u8(`?`)
+	if q_idx >= 0 {
+		path = path[..q_idx]
 	}
 
 	// HEAD メソッド: 専用ルートがなければ GET ルートにフォールバック
@@ -169,8 +178,17 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 		mut root := app.routes[lookup_method] or { return ctx.not_found() }
 		if node, route_mws := root.find_route(path, mut ctx) {
 			if handler := node.handler {
-				mut all_mws := app.middlewares.clone()
-				all_mws << route_mws
+				// グローバルミドルウェアとルートミドルウェアをマージ
+				// 不要なクローンを避けて速度を最適化する
+				all_mws := if app.middlewares.len == 0 {
+					route_mws
+				} else if route_mws.len == 0 {
+					app.middlewares
+				} else {
+					mut mws := app.middlewares.clone()
+					mws << route_mws
+					mws
+				}
 
 				mut chain := &MiddlewareChain{
 					middlewares: all_mws
@@ -186,7 +204,11 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 					// IError.code() が 400-599 の場合は HTTP ステータスコードとして扱う
 					err_code := err.code()
 					if err_code >= 100 && err_code <= 599 {
-						mut err_headers := ctx.headers.clone()
+						mut err_headers := if ctx.headers.len > 0 {
+							ctx.headers.clone()
+						} else {
+							map[string]string{}
+						}
 						err_headers['Content-Type'] = 'text/plain; charset=utf-8'
 						return Response{
 							status:  err_code
@@ -207,15 +229,13 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 		}
 	} else if method == 'OPTIONS' {
 		// Run global middlewares for OPTIONS if no specific route is found, primarily for CORS
-		mut all_mws := app.middlewares.clone()
-
 		// Fallback handler for OPTIONS
 		handler := fn (mut ctx Context) !Response {
 			return ctx.text('Method Not Allowed')
 		}
 
 		mut chain := &MiddlewareChain{
-			middlewares: all_mws
+			middlewares: app.middlewares
 			handler:     handler
 			index:       0
 		}

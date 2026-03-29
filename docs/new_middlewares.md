@@ -138,6 +138,73 @@ app.use(hikari.compress())
 
 ---
 
+## JWT 認証 (`jwt`)
+
+HMAC-SHA256 (HS256) アルゴリズムで JWT トークンを検証します。
+検証成功後はペイロード JSON を `ctx.store['jwt_payload']` に格納します。
+
+```v
+app.use(hikari.jwt(hikari.JwtOptions{
+    secret: 'your-secret-key'
+}))
+```
+
+### トークンの生成
+
+`hikari.jwt_sign()` ヘルパーを使用してトークンを生成できます。
+
+```v
+token := hikari.jwt_sign({
+    'sub':  'user123'
+    'role': 'admin'
+}, 'your-secret-key')
+// eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.<payload>.<signature>
+```
+
+### ペイロードの取得
+
+```v
+app.get('/me', fn (mut ctx hikari.Context) !hikari.Response {
+    payload_json := ctx.get('jwt_payload')
+    // payload_json は JSON 文字列: {"sub":"user123","role":"admin"}
+    return ctx.text(payload_json)
+})
+```
+
+### JwtOptions
+
+| フィールド | 型 | デフォルト | 説明 |
+|---|---|---|---|
+| `secret` | `string` | — | 署名検証に使う秘密鍵（必須） |
+| `scheme` | `string` | `'Bearer'` | Authorization ヘッダーのスキーム |
+| `unauthorized_message` | `string` | `'Unauthorized'` | 認証失敗時のレスポンスボディ |
+
+### ルート単位で JWT を適用する例
+
+```v
+import hikari
+
+fn main() {
+    mut app := hikari.new()
+
+    // 認証不要のルート
+    app.post('/login', fn (mut c hikari.Context) !hikari.Response {
+        token := hikari.jwt_sign({'sub': 'user1'}, 'secret')
+        return c.text(token)
+    })
+
+    // JWT 認証が必要なルート（ルートミドルウェアとして指定）
+    jwt_mw := hikari.jwt(hikari.JwtOptions{ secret: 'secret' })
+    app.get('/profile', fn (mut c hikari.Context) !hikari.Response {
+        return c.text('Hello: ${c.get("jwt_payload")}')
+    }, jwt_mw)
+
+    app.fire(3000)
+}
+```
+
+---
+
 ## 使用例: 複数ミドルウェアの組み合わせ
 
 ```v
