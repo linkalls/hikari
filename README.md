@@ -139,7 +139,28 @@ app.static('/public', './public')
 
 これによって、たとえば `./public/style.css` というファイルがある場合、クライアントは `/public/style.css` にアクセスしてファイルを取得できます。また、パスにファイル名が指定されていない場合（例: `/public/`）、自動的に `index.html` が検索されます。
 
-### 7. 標準ミドルウェア (Standard Middlewares)
+### 7. ファイルアップロード (File Uploads)
+
+`multipart/form-data` 形式のリクエストからファイルやフォームデータを簡単に取得できます。
+
+```v
+app.post('/upload', fn (mut c hikari.Context) !hikari.Response {
+    // フォームデータの取得
+    username := c.form_value('username')
+
+    // アップロードされたファイルの取得
+    file := c.file('avatar') or { return c.text('No file uploaded') }
+
+    // ファイル情報の利用
+    // file.filename (string)
+    // file.content_type (string)
+    // file.data (string - ファイルの中身)
+
+    return c.text('Uploaded: ${file.filename} by ${username}')
+})
+```
+
+### 8. 標準ミドルウェア (Standard Middlewares)
 
 Hikariは、組み込みで `Logger`, `CORS`, `Recover` の標準ミドルウェアを提供しています。詳細は [docs/standard_middlewares.md](docs/standard_middlewares.md) を参照してください。
 
@@ -158,4 +179,4 @@ app.use(hikari.recover())
 
 ## 今後の展望
 
-- ファイルアップロードのサポート
+- WebSocketのサポート
