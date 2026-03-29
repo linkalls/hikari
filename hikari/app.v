@@ -11,6 +11,49 @@ pub mut:
 	error_handler ?ErrorHandler
 }
 
+// ルートグループ: プレフィックスと共通ミドルウェアを持つルートのグループ
+@[heap]
+pub struct RouteGroup {
+mut:
+	app         &Hikari
+	prefix      string
+	middlewares []Middleware
+}
+
+pub fn (mut g RouteGroup) use(middleware Middleware) {
+	g.middlewares << middleware
+}
+
+pub fn (mut g RouteGroup) get(path string, handler Handler, middlewares ...Middleware) {
+	mut all_mws := g.middlewares.clone()
+	all_mws << middlewares
+	g.app.add_route('GET', g.prefix + path, handler, ...all_mws)
+}
+
+pub fn (mut g RouteGroup) post(path string, handler Handler, middlewares ...Middleware) {
+	mut all_mws := g.middlewares.clone()
+	all_mws << middlewares
+	g.app.add_route('POST', g.prefix + path, handler, ...all_mws)
+}
+
+pub fn (mut g RouteGroup) put(path string, handler Handler, middlewares ...Middleware) {
+	mut all_mws := g.middlewares.clone()
+	all_mws << middlewares
+	g.app.add_route('PUT', g.prefix + path, handler, ...all_mws)
+}
+
+pub fn (mut g RouteGroup) delete(path string, handler Handler, middlewares ...Middleware) {
+	mut all_mws := g.middlewares.clone()
+	all_mws << middlewares
+	g.app.add_route('DELETE', g.prefix + path, handler, ...all_mws)
+}
+
+pub fn (mut g RouteGroup) patch(path string, handler Handler, middlewares ...Middleware) {
+	mut all_mws := g.middlewares.clone()
+	all_mws << middlewares
+	g.app.add_route('PATCH', g.prefix + path, handler, ...all_mws)
+}
+
 pub fn new() &Hikari {
 	return &Hikari{
 		routes:        map[string]&TrieNode{}
@@ -77,6 +120,14 @@ pub fn (mut app Hikari) patch(path string, handler Handler, middlewares ...Middl
 	app.add_route('PATCH', path, handler, ...middlewares)
 }
 
+pub fn (mut app Hikari) head(path string, handler Handler, middlewares ...Middleware) {
+	app.add_route('HEAD', path, handler, ...middlewares)
+}
+
+pub fn (mut app Hikari) options(path string, handler Handler, middlewares ...Middleware) {
+	app.add_route('OPTIONS', path, handler, ...middlewares)
+}
+
 pub fn (mut app Hikari) static(path string, root_dir string) {
 	// e.g. path = "/public", root_dir = "./public"
 	// We need to match /public, /public/, and /public/*
@@ -91,6 +142,16 @@ pub fn (mut app Hikari) static(path string, root_dir string) {
 	app.get(route_path + '/:path...', handler)
 }
 
+// ルートグループを作成する
+// グループに登録したルートは全てプレフィックスが付与される
+pub fn (mut app Hikari) group(prefix string, middlewares ...Middleware) &RouteGroup {
+	return &RouteGroup{
+		app:         unsafe { app }
+		prefix:      prefix
+		middlewares: middlewares
+	}
+}
+
 // Request processing pipeline.
 // Can be called directly for testing.
 pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
@@ -100,9 +161,12 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 		path = path.split('?')[0]
 	}
 
+	// HEAD メソッド: 専用ルートがなければ GET ルートにフォールバック
+	lookup_method := if method == 'HEAD' && 'HEAD' !in app.routes { 'GET' } else { method }
+
 	// Route mapping
-	if method in app.routes {
-		mut root := app.routes[method] or { return ctx.not_found() }
+	if lookup_method in app.routes {
+		mut root := app.routes[lookup_method] or { return ctx.not_found() }
 		if node, route_mws := root.find_route(path, mut ctx) {
 			if handler := node.handler {
 				mut all_mws := app.middlewares.clone()
@@ -118,7 +182,25 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 					if err_handler := app.error_handler {
 						return err_handler(err, mut ctx)
 					}
+					// HttpError のステータスコードを自動的に使用する
+					// IError.code() が 400-599 の場合は HTTP ステータスコードとして扱う
+					err_code := err.code()
+					if err_code >= 100 && err_code <= 599 {
+						mut err_headers := ctx.headers.clone()
+						err_headers['Content-Type'] = 'text/plain; charset=utf-8'
+						return Response{
+							status:  err_code
+							body:    err.msg()
+							headers: err_headers
+						}
+					}
 					return err
+				}
+				// HEAD メソッドはボディを返さない
+				if method == 'HEAD' {
+					mut head_resp := resp
+					head_resp.body = ''
+					return head_resp
 				}
 				return resp
 			}
@@ -149,6 +231,41 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 	return ctx.not_found()
 }
 
+// 任意のHTTPステータスコードに対応するステータスラインを書き込む
+fn write_status_line(mut res picohttpparser.Response, status int) {
+	match status {
+		200 { res.write_string('HTTP/1.1 200 OK\r\n') }
+		201 { res.write_string('HTTP/1.1 201 Created\r\n') }
+		202 { res.write_string('HTTP/1.1 202 Accepted\r\n') }
+		204 { res.write_string('HTTP/1.1 204 No Content\r\n') }
+		206 { res.write_string('HTTP/1.1 206 Partial Content\r\n') }
+		301 { res.write_string('HTTP/1.1 301 Moved Permanently\r\n') }
+		302 { res.write_string('HTTP/1.1 302 Found\r\n') }
+		303 { res.write_string('HTTP/1.1 303 See Other\r\n') }
+		304 { res.write_string('HTTP/1.1 304 Not Modified\r\n') }
+		307 { res.write_string('HTTP/1.1 307 Temporary Redirect\r\n') }
+		308 { res.write_string('HTTP/1.1 308 Permanent Redirect\r\n') }
+		400 { res.write_string('HTTP/1.1 400 Bad Request\r\n') }
+		401 { res.write_string('HTTP/1.1 401 Unauthorized\r\n') }
+		403 { res.write_string('HTTP/1.1 403 Forbidden\r\n') }
+		404 { res.write_string('HTTP/1.1 404 Not Found\r\n') }
+		405 { res.write_string('HTTP/1.1 405 Method Not Allowed\r\n') }
+		408 { res.write_string('HTTP/1.1 408 Request Timeout\r\n') }
+		409 { res.write_string('HTTP/1.1 409 Conflict\r\n') }
+		410 { res.write_string('HTTP/1.1 410 Gone\r\n') }
+		413 { res.write_string('HTTP/1.1 413 Payload Too Large\r\n') }
+		415 { res.write_string('HTTP/1.1 415 Unsupported Media Type\r\n') }
+		422 { res.write_string('HTTP/1.1 422 Unprocessable Entity\r\n') }
+		429 { res.write_string('HTTP/1.1 429 Too Many Requests\r\n') }
+		500 { res.write_string('HTTP/1.1 500 Internal Server Error\r\n') }
+		501 { res.write_string('HTTP/1.1 501 Not Implemented\r\n') }
+		502 { res.write_string('HTTP/1.1 502 Bad Gateway\r\n') }
+		503 { res.write_string('HTTP/1.1 503 Service Unavailable\r\n') }
+		504 { res.write_string('HTTP/1.1 504 Gateway Timeout\r\n') }
+		else { res.write_string('HTTP/1.1 200 OK\r\n') }
+	}
+}
+
 // picoev callback execution
 fn pico_cb(void_ptr_app voidptr, req picohttpparser.Request, mut res picohttpparser.Response) {
 	unsafe {
@@ -163,13 +280,7 @@ fn pico_cb(void_ptr_app voidptr, req picohttpparser.Request, mut res picohttppar
 		ctx.parse_query()
 
 		if resp := app.handle_request(mut ctx) {
-			match resp.status {
-				200 { res.http_ok() }
-				404 { res.http_404() }
-				405 { res.http_405() }
-				500 { res.http_500() }
-				else { res.http_ok() } // Fallback
-			}
+			write_status_line(mut res, resp.status)
 			for k, v in resp.headers {
 				res.header(k, v)
 			}

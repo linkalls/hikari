@@ -24,6 +24,25 @@ Hikariの開発は、**「究極のパフォーマンス」と「最高のDevelo
 
 ---
 
+## 機能一覧 (Features)
+
+- ✅ **Radix Tree ルーター** — パスパラメータ・ワイルドカード対応
+- ✅ **全 HTTP メソッド** — GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
+- ✅ **HEAD メソッド自動サポート** — GET ルートへのフォールバック
+- ✅ **ルートグループ** — `app.group('/api')` でプレフィックスと共通ミドルウェアを適用
+- ✅ **全 HTTP ステータスコード** — 200, 201, 204, 301, 302, 400, 401, 403, 429, 503 など
+- ✅ **コンテキストストア** — `ctx.set()` / `ctx.get()` でミドルウェア間のデータ共有
+- ✅ **リダイレクト** — `ctx.redirect(url, status)`
+- ✅ **JSON レスポンス/パース** — `ctx.json()` / `ctx.bind_json()`
+- ✅ **フォームパース** — multipart/form-data, application/x-www-form-urlencoded
+- ✅ **ファイルアップロード** — `ctx.file()` / `ctx.files()`
+- ✅ **静的ファイル配信** — ETag, Cache-Control 対応
+- ✅ **HttpError 型** — HTTP ステータスコード付きエラー
+- ✅ **グローバルエラーハンドリング** — `app.set_error_handler()`
+- ✅ **標準ミドルウェア** — Logger, CORS, Recover, RateLimit, RequestID, Secure, ETag, BasicAuth, Compress
+
+---
+
 ## 使い方 (Usage)
 
 Hikariを使った簡単なアプリケーションの構築方法です。
@@ -177,6 +196,92 @@ app.use(hikari.cors(hikari.CorsOptions{
 app.use(hikari.recover())
 ```
 
+### 9. ルートグループ (Route Groups)
+
+共通のプレフィックスやミドルウェアを持つルートをグループ化できます。詳細は [docs/route_groups.md](docs/route_groups.md) を参照してください。
+
+```v
+// '/api/v1' プレフィックスのグループ
+mut api := app.group('/api/v1')
+
+api.get('/users', fn (mut c hikari.Context) !hikari.Response {
+    return c.json(['Alice', 'Bob'])
+})
+
+api.post('/users', fn (mut c hikari.Context) !hikari.Response {
+    return c.send_status(201, 'Created')
+})
+```
+
+### 10. 新ミドルウェア (New Middlewares)
+
+詳細は [docs/new_middlewares.md](docs/new_middlewares.md) を参照してください。
+
+```v
+// レートリミット: 1分間に100リクエストまで
+app.use(hikari.rate_limit(hikari.RateLimitOptions{
+    max:       100
+    window_ms: 60000
+}))
+
+// リクエスト ID: 各リクエストに一意のIDを付与
+app.use(hikari.request_id())
+
+// セキュリティヘッダー: Helmet風の主要セキュリティヘッダーを自動付与
+app.use(hikari.secure(hikari.SecureOptions{}))
+
+// ETag: レスポンスの ETag を自動計算・304 Not Modified を返す
+app.use(hikari.etag())
+
+// Gzip 圧縮: Accept-Encoding: gzip を受け付けるクライアントへ圧縮レスポンス
+app.use(hikari.compress())
+
+// Basic 認証: ルートやグループに認証を追加
+app.use(hikari.basic_auth(hikari.BasicAuthOptions{
+    username: 'admin'
+    password: 'secret'
+}))
+```
+
+### 11. リダイレクトとカスタムステータスコード
+
+```v
+// リダイレクト
+app.get('/old-path', fn (mut c hikari.Context) !hikari.Response {
+    return c.redirect('/new-path', 301)
+})
+
+// カスタムステータスコード (201 Created)
+app.post('/resource', fn (mut c hikari.Context) !hikari.Response {
+    return c.send_status(201, 'Created')
+})
+
+// HttpError 型でエラーを返す（ステータスコードを自動適用）
+app.get('/protected', fn (mut c hikari.Context) !hikari.Response {
+    return hikari.http_error(403, 'Forbidden')
+})
+```
+
+### 12. コンテキストストア
+
+ミドルウェアとハンドラの間でデータを受け渡すことができます。
+
+```v
+fn auth_mw(mut ctx hikari.Context, next hikari.Next) !hikari.Response {
+    // ユーザー情報をコンテキストに保存
+    ctx.set('user_id', '42')
+    ctx.set('user_role', 'admin')
+    return next(mut ctx)
+}
+
+app.get('/profile', fn (mut ctx hikari.Context) !hikari.Response {
+    user_id := ctx.get('user_id')
+    return ctx.text('User ID: ${user_id}')
+}, auth_mw)
+```
+
 ## 今後の展望
 
 - WebSocketのサポート
+- HTTP/2 のサポート
+- JWT 認証ミドルウェア

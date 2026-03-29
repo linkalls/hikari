@@ -18,3 +18,27 @@ pub mut:
 pub fn (res Response) text() string {
 	return res.body
 }
+
+// HTTPステータスコード付きエラー型
+// IError インターフェースを実装する
+pub struct HttpError {
+pub:
+	status  int
+	message string
+}
+
+pub fn (e &HttpError) msg() string {
+	return e.message
+}
+
+pub fn (e &HttpError) code() int {
+	return e.status
+}
+
+// HTTPステータスコード付きエラーを生成するヘルパー関数
+pub fn http_error(status int, message string) IError {
+	return &HttpError{
+		status:  status
+		message: message
+	}
+}
