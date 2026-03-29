@@ -77,6 +77,20 @@ pub fn (mut app Hikari) patch(path string, handler Handler, middlewares ...Middl
 	app.add_route('PATCH', path, handler, ...middlewares)
 }
 
+pub fn (mut app Hikari) static(path string, root_dir string) {
+	// e.g. path = "/public", root_dir = "./public"
+	// We need to match /public, /public/, and /public/*
+	handler := static_handler(path, root_dir)
+	mut route_path := path
+	if route_path.ends_with('/') {
+		route_path = route_path[0..route_path.len - 1]
+	}
+
+	app.get(route_path, handler)
+	app.get(route_path + '/', handler)
+	app.get(route_path + '/:path...', handler)
+}
+
 // Request processing pipeline.
 // Can be called directly for testing.
 pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
