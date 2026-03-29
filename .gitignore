@@ -1,0 +1,14 @@
+# Compiled Object files
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# Executables
+benchmark/main
+example/main
+main
+
+# V specific
+.vbin/
