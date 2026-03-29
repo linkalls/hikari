@@ -40,10 +40,12 @@ Hikariの開発は、**「究極のパフォーマンス」と「最高のDevelo
 - ✅ **HttpError 型** — HTTP ステータスコード付きエラー
 - ✅ **グローバルエラーハンドリング** — `app.set_error_handler()`
 - ✅ **標準ミドルウェア** — Logger, CORS, Recover, RateLimit, RequestID, Secure, ETag, BasicAuth, Compress, BodyLimit
+- ✅ **JWT 認証ミドルウェア** — HS256 署名検証・`jwt_sign()` ヘルパー
 - ✅ **クッキーサポート** — `ctx.cookie()` / `ctx.cookies()` / `ctx.set_cookie()`
 - ✅ **クエリパラメータ** — `ctx.query_value(key)` 便利メソッド
 - ✅ **Content-Length 自動付与** — HTTP/1.1 Keep-Alive 効率最適化
 - ✅ **ヘッダーキャッシュ** — `ctx.header()` が初回アクセス時にキャッシュを構築し O(1) ルックアップ
+- ✅ **ゼロコピー最適化** — ミドルウェアスライスのクローンを必要時のみ実施（ホットパス高速化）
 
 ---
 
@@ -245,9 +247,52 @@ app.use(hikari.basic_auth(hikari.BasicAuthOptions{
     username: 'admin'
     password: 'secret'
 }))
+
+// JWT 認証: HS256 トークンを検証し、ペイロードを ctx.store に保存
+app.use(hikari.jwt(hikari.JwtOptions{
+    secret: 'your-secret-key'
+}))
 ```
 
-### 11. クッキーサポート (Cookie Support)
+### 11. JWT 認証 (JWT Authentication)
+
+HS256 アルゴリズムで JWT トークンを検証します。トークンのペイロード JSON は `ctx.get('jwt_payload')` で取得できます。
+
+```v
+import hikari
+import json
+
+struct Claims {
+    sub  string
+    role string
+}
+
+// ログイン: JWT トークンを生成して返す
+app.post('/login', fn (mut c hikari.Context) !hikari.Response {
+    token := hikari.jwt_sign({
+        'sub':  'user123'
+        'role': 'admin'
+    }, 'your-secret-key')
+    return c.text(token)
+})
+
+// 保護されたルート: JWT ミドルウェアで認証
+app.get('/profile', fn (mut c hikari.Context) !hikari.Response {
+    payload_str := c.get('jwt_payload')
+    // payload_str は JSON 文字列: {"sub":"user123","role":"admin"}
+    return c.text('Hello, ${payload_str}')
+}, hikari.jwt(hikari.JwtOptions{ secret: 'your-secret-key' }))
+```
+
+#### JwtOptions
+
+| フィールド | 型 | デフォルト | 説明 |
+|---|---|---|---|
+| `secret` | `string` | — | 署名検証に使う秘密鍵（必須） |
+| `scheme` | `string` | `'Bearer'` | Authorization ヘッダーのスキーム |
+| `unauthorized_message` | `string` | `'Unauthorized'` | 認証失敗時のレスポンスボディ |
+
+### 12. クッキーサポート (Cookie Support)
 
 ```v
 // ログイン時にセッションクッキーを設定
@@ -275,7 +320,7 @@ app.get('/me', fn (mut c hikari.Context) !hikari.Response {
 })
 ```
 
-### 12. リダイレクトとカスタムステータスコード
+### 13. リダイレクトとカスタムステータスコード
 
 ```v
 // リダイレクト
@@ -294,7 +339,7 @@ app.get('/protected', fn (mut c hikari.Context) !hikari.Response {
 })
 ```
 
-### 13. コンテキストストアとクエリパラメータ
+### 14. コンテキストストアとクエリパラメータ
 
 ミドルウェアとハンドラの間でデータを受け渡すことができます。
 
@@ -323,4 +368,3 @@ app.get('/search', fn (mut c hikari.Context) !hikari.Response {
 
 - WebSocketのサポート
 - HTTP/2 のサポート
-- JWT 認証ミドルウェア

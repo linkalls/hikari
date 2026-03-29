@@ -108,7 +108,7 @@ pub fn (mut c Context) text(body string) !Response {
 	mut res := Response{
 		status:      200
 		body:        body
-		headers:     c.headers.clone()
+		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
 		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
@@ -119,7 +119,7 @@ pub fn (mut c Context) html(body string) !Response {
 	mut res := Response{
 		status:      200
 		body:        body
-		headers:     c.headers.clone()
+		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
 		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Content-Type'] = 'text/html; charset=utf-8'
@@ -131,7 +131,7 @@ pub fn (mut c Context) json[T](val T) !Response {
 	mut res := Response{
 		status:      200
 		body:        encoded
-		headers:     c.headers.clone()
+		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
 		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Content-Type'] = 'application/json; charset=utf-8'
@@ -142,7 +142,7 @@ pub fn (mut c Context) not_found() !Response {
 	mut res := Response{
 		status:      404
 		body:        '404 Not Found'
-		headers:     c.headers.clone()
+		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
 		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
@@ -154,7 +154,7 @@ pub fn (mut c Context) send_status(status int, body string) !Response {
 	mut res := Response{
 		status:      status
 		body:        body
-		headers:     c.headers.clone()
+		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
 		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Content-Type'] = 'text/plain; charset=utf-8'
@@ -167,7 +167,7 @@ pub fn (mut c Context) redirect(url string, status int) !Response {
 	mut res := Response{
 		status:      status
 		body:        ''
-		headers:     c.headers.clone()
+		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
 		set_cookies: c.set_cookies.clone()
 	}
 	res.headers['Location'] = url
