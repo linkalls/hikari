@@ -33,19 +33,22 @@ Hikariの開発は、**「究極のパフォーマンス」と「最高のDevelo
 - ✅ **全 HTTP ステータスコード** — 200, 201, 204, 301, 302, 400, 401, 403, 429, 503 など
 - ✅ **コンテキストストア** — `ctx.set()` / `ctx.get()` でミドルウェア間のデータ共有
 - ✅ **リダイレクト** — `ctx.redirect(url, status)`
-- ✅ **JSON レスポンス/パース** — `ctx.json()` / `ctx.bind_json()`
+- ✅ **JSON レスポンス/パース** — `ctx.json()` / `ctx.json_status()` / `ctx.bind_json()`
+- ✅ **HTML レスポンス** — `ctx.html()` / `ctx.html_status()`
 - ✅ **フォームパース** — multipart/form-data, application/x-www-form-urlencoded
 - ✅ **ファイルアップロード** — `ctx.file()` / `ctx.files()`
 - ✅ **静的ファイル配信** — ETag, Cache-Control 対応
 - ✅ **HttpError 型** — HTTP ステータスコード付きエラー
 - ✅ **グローバルエラーハンドリング** — `app.set_error_handler()`
-- ✅ **標準ミドルウェア** — Logger, CORS, Recover, RateLimit, RequestID, Secure, ETag, BasicAuth, Compress, BodyLimit
+- ✅ **カスタム 404 ハンドラー** — `app.set_not_found_handler()`
+- ✅ **標準ミドルウェア** — Logger, CORS, Recover, RateLimit, RequestID, Secure, ETag, BasicAuth, Compress, BodyLimit, **Timeout**
 - ✅ **JWT 認証ミドルウェア** — HS256 署名検証・`jwt_sign()` ヘルパー
 - ✅ **クッキーサポート** — `ctx.cookie()` / `ctx.cookies()` / `ctx.set_cookie()`
 - ✅ **クエリパラメータ** — `ctx.query_value(key)` 便利メソッド
 - ✅ **Content-Length 自動付与** — HTTP/1.1 Keep-Alive 効率最適化
 - ✅ **ヘッダーキャッシュ** — `ctx.header()` が初回アクセス時にキャッシュを構築し O(1) ルックアップ
 - ✅ **ゼロコピー最適化** — ミドルウェアスライスのクローンを必要時のみ実施（ホットパス高速化）
+- ✅ **直接ハンドラー呼び出し最適化** — ミドルウェアなしのルートで `MiddlewareChain` ヒープアロケーションを完全回避
 
 ---
 
@@ -363,6 +366,52 @@ app.get('/search', fn (mut c hikari.Context) !hikari.Response {
     return c.text('q=${q}, page=${page}')
 })
 ```
+
+### 15. カスタム 404 ハンドラー (Custom Not Found Handler)
+
+デフォルトの 404 レスポンスをカスタマイズできます。
+
+```v
+app.set_not_found_handler(fn (mut c hikari.Context) !hikari.Response {
+    return c.json_status(404, {
+        'error': 'Not Found'
+        'path':  c.req.path
+    })
+})
+```
+
+### 16. JSON/HTML カスタムステータスレスポンス
+
+`ctx.json_status()` と `ctx.html_status()` を使用すると、任意のステータスコードで JSON または HTML レスポンスを返せます。
+
+```v
+// 201 Created で JSON を返す
+app.post('/resource', fn (mut c hikari.Context) !hikari.Response {
+    return c.json_status(201, {
+        'id':      '42'
+        'message': 'Created'
+    })
+})
+
+// 202 Accepted で HTML を返す
+app.post('/async-job', fn (mut c hikari.Context) !hikari.Response {
+    return c.html_status(202, '<p>Job accepted. Processing...</p>')
+})
+```
+
+### 17. タイムアウトミドルウェア (Timeout Middleware)
+
+指定時間内にハンドラが完了しない場合、`408 Request Timeout` を返します。
+
+```v
+// 5秒のタイムアウトを設定
+app.use(hikari.timeout(hikari.TimeoutOptions{
+    timeout_ms: 5000
+    message:    'Request Timeout'
+}))
+```
+
+詳細は [docs/new_middlewares.md](docs/new_middlewares.md) を参照してください。
 
 ## 今後の展望
 

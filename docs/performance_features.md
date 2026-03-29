@@ -155,3 +155,47 @@ app.use(hikari.body_limit(hikari.BodyLimitOptions{
 |---|---|---|---|
 | `max_bytes` | `int` | `1_048_576` | 許可する最大ボディサイズ（バイト単位） |
 | `message` | `string` | `'Request Entity Too Large'` | リミット超過時のレスポンスボディ |
+
+---
+
+### 直接ハンドラー呼び出し最適化 (Direct Handler Call Optimization)
+
+`handle_request` のホットパスでは、グローバルミドルウェアもルートミドルウェアも存在しない場合、`MiddlewareChain` 構造体のヒープアロケーションを完全にスキップし、ハンドラを直接呼び出します。
+
+| 状況 | 動作 |
+|------|------|
+| ミドルウェアあり | `MiddlewareChain` を構築してチェーン実行 |
+| ミドルウェアなし | ハンドラを直接呼び出す（ヒープアロケーション 0） |
+
+```v
+// ミドルウェアなしのルート → MiddlewareChain アロケーションを完全回避
+app.get('/fast', fn (mut c hikari.Context) !hikari.Response {
+    return c.text('Blazing Fast!')
+})
+```
+
+これにより、ミドルウェアを使用しない純粋なルーティングのシナリオ（ベンチマーク計測等）で、リクエストあたりのメモリ割り当てをさらに削減します。
+
+---
+
+## 新機能 (New Features)（続き）
+
+### カスタム 404 ハンドラー
+
+デフォルトの `404 Not Found` レスポンスをカスタマイズできます。
+
+```v
+app.set_not_found_handler(fn (mut c hikari.Context) !hikari.Response {
+    return c.json_status(404, {'error': 'Not Found', 'path': c.req.path})
+})
+```
+
+### JSON/HTML カスタムステータスレスポンス
+
+```v
+// 201 Created で JSON を返す
+return c.json_status(201, {'id': '1', 'name': 'Resource'})
+
+// 202 Accepted で HTML を返す
+return c.html_status(202, '<p>Accepted</p>')
+```

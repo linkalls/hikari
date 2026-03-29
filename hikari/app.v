@@ -6,9 +6,10 @@ import picohttpparser
 @[heap]
 pub struct Hikari {
 pub mut:
-	routes        map[string]&TrieNode
-	middlewares   []Middleware
-	error_handler ?ErrorHandler
+	routes             map[string]&TrieNode
+	middlewares        []Middleware
+	error_handler      ?ErrorHandler
+	not_found_handler  ?Handler
 }
 
 // ルートグループ: プレフィックスと共通ミドルウェアを持つルートのグループ
@@ -56,9 +57,10 @@ pub fn (mut g RouteGroup) patch(path string, handler Handler, middlewares ...Mid
 
 pub fn new() &Hikari {
 	return &Hikari{
-		routes:        map[string]&TrieNode{}
-		middlewares:   []Middleware{}
-		error_handler: none
+		routes:            map[string]&TrieNode{}
+		middlewares:       []Middleware{}
+		error_handler:     none
+		not_found_handler: none
 	}
 }
 
@@ -68,6 +70,11 @@ pub fn (mut app Hikari) use(middleware Middleware) {
 
 pub fn (mut app Hikari) set_error_handler(handler ErrorHandler) {
 	app.error_handler = handler
+}
+
+// カスタム 404 ハンドラーを設定する
+pub fn (mut app Hikari) set_not_found_handler(handler Handler) {
+	app.not_found_handler = handler
 }
 
 // Middleware execution chain
@@ -190,6 +197,38 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 					mws
 				}
 
+				// ミドルウェアが存在しない場合はチェーンを構築せず直接ハンドラを呼び出す
+				// これにより MiddlewareChain のヒープアロケーションを回避し、
+				// ミドルウェアなしのルートのホットパスを大幅に高速化する
+				if all_mws.len == 0 {
+					resp := handler(mut ctx) or {
+						if err_handler := app.error_handler {
+							return err_handler(err, mut ctx)
+						}
+						err_code := err.code()
+						if err_code >= 100 && err_code <= 599 {
+							mut err_headers := if ctx.headers.len > 0 {
+								ctx.headers.clone()
+							} else {
+								map[string]string{}
+							}
+							err_headers['Content-Type'] = 'text/plain; charset=utf-8'
+							return Response{
+								status:  err_code
+								body:    err.msg()
+								headers: err_headers
+							}
+						}
+						return err
+					}
+					if method == 'HEAD' {
+						mut head_resp := resp
+						head_resp.body = ''
+						return head_resp
+					}
+					return resp
+				}
+
 				mut chain := &MiddlewareChain{
 					middlewares: all_mws
 					handler:     handler
@@ -247,6 +286,9 @@ pub fn (mut app Hikari) handle_request(mut ctx Context) !Response {
 			return err
 		}
 		return resp
+	}
+	if nf_handler := app.not_found_handler {
+		return nf_handler(mut ctx)
 	}
 	return ctx.not_found()
 }

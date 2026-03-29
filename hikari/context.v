@@ -149,6 +149,31 @@ pub fn (mut c Context) not_found() !Response {
 	return res
 }
 
+// 任意のHTTPステータスコードで JSON レスポンスを返す
+pub fn (mut c Context) json_status[T](status int, val T) !Response {
+	encoded := json.encode(val)
+	mut res := Response{
+		status:      status
+		body:        encoded
+		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
+		set_cookies: c.set_cookies.clone()
+	}
+	res.headers['Content-Type'] = 'application/json; charset=utf-8'
+	return res
+}
+
+// 任意のHTTPステータスコードで HTML レスポンスを返す
+pub fn (mut c Context) html_status(status int, body string) !Response {
+	mut res := Response{
+		status:      status
+		body:        body
+		headers:     if c.headers.len > 0 { c.headers.clone() } else { map[string]string{} }
+		set_cookies: c.set_cookies.clone()
+	}
+	res.headers['Content-Type'] = 'text/html; charset=utf-8'
+	return res
+}
+
 // 任意のHTTPステータスコードでレスポンスを返す
 pub fn (mut c Context) send_status(status int, body string) !Response {
 	mut res := Response{
