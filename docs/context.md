@@ -1,5 +1,7 @@
 # コンテキスト (Context)
 
+[English](context_en.md) | [日本語](context.md)
+
 `hikari.Context` はHTTPリクエストとレスポンスをカプセル化し、Honoライクで直感的なAPIを提供します。
 
 ## リクエスト取得メソッド

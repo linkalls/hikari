@@ -1,5 +1,7 @@
 # Hikari 🚀
 
+[English](README_en.md) | [日本語](README.md)
+
 Hikariは、V言語（vlang）で書かれた、**Honoライクで直感的に使える超高速なWebサーバーフレームワーク**です。
 
 ## 哲学 (Philosophy)
@@ -415,5 +417,5 @@ app.use(hikari.timeout(hikari.TimeoutOptions{
 
 ## 今後の展望
 
-- WebSocketのサポート
-- HTTP/2 のサポート
+- ✅ WebSocketのサポート (`app.ws` メソッドで追加のポートを介してサポート)
+- HTTP/2 のサポート（現在、`picoev`/`picohttpparser` はHTTP/1.xに特化しているため、NginxやCaddyなどのリバースプロキシを介したHTTP/2サポートを推奨しています）

@@ -1,5 +1,7 @@
 # 速度最適化と新機能 (Performance & New Features)
 
+[English](performance_features_en.md) | [日本語](performance_features.md)
+
 ## 速度最適化 (Performance Improvements)
 
 ### ヘッダーキャッシュ (Header Cache)

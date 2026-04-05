@@ -1,5 +1,7 @@
 # ルートグループ (Route Groups)
 
+[English](route_groups_en.md) | [日本語](route_groups.md)
+
 Hikariでは `app.group()` を使って、共通のプレフィックスやミドルウェアを持つルートをグループ化できます。
 
 ## 基本的な使い方

@@ -1,5 +1,7 @@
 # 新機能ミドルウェア (New Middlewares)
 
+[English](new_middlewares_en.md) | [日本語](new_middlewares.md)
+
 Hikari には以下の標準ミドルウェアが用意されています。
 
 ---
