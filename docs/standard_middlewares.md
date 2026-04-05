@@ -1,5 +1,7 @@
 # 標準ミドルウェア (Standard Middlewares)
 
+[English](standard_middlewares_en.md) | [日本語](standard_middlewares.md)
+
 Hikariは、Webアプリケーション開発で頻繁に使用される標準的なミドルウェアを組み込みで提供しています。
 
 ## Logger (ロガー)

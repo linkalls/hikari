@@ -1,5 +1,7 @@
 # ミドルウェア (Middlewares)
 
+[English](middleware_en.md) | [日本語](middleware.md)
+
 Hikariのミドルウェアは、リクエストの前後で処理を挟み込むことができます。グローバルにも、特定のルーティングにも登録できます。
 
 ## 定義方法

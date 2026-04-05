@@ -1,5 +1,6 @@
 module hikari
 
+import net.websocket
 import picoev
 import picohttpparser
 
